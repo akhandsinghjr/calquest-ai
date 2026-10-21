@@ -7,14 +7,14 @@ export const RANK_TITLES: { minLevel: number; title: string; badgeEmoji: string 
   { minLevel: 8, title: 'Nutri-Knight', badgeEmoji: '⚔️' },
   { minLevel: 12, title: 'Metabolic Mage', badgeEmoji: '🔮' },
   { minLevel: 16, title: 'Macro Grandmaster', badgeEmoji: '👑' },
-  { minLevel: 20, title: 'Argon Titan', badgeEmoji: '⚡' },
+  { minLevel: 20, title: 'Metabolic Sovereign', badgeEmoji: '⚡' },
 ];
 
 export const ALL_BADGES: Badge[] = [
   {
     id: 'first_snap',
     title: 'First Snap',
-    description: 'Log your very first meal using Gemini 4 Argon vision.',
+    description: 'Log your very first meal using camera food vision.',
     icon: '📸',
     xpReward: 100,
   },
@@ -42,7 +42,7 @@ export const ALL_BADGES: Badge[] = [
   {
     id: 'clean_eater',
     title: 'Clean Plate Club',
-    description: 'Log a meal with a Gemini Health Score of 85 or higher.',
+    description: 'Log a meal with a Health Score of 85 or higher.',
     icon: '🥗',
     xpReward: 120,
   },
@@ -90,7 +90,7 @@ export const ALL_BADGES: Badge[] = [
   },
   {
     id: 'meals_50',
-    title: 'Argon Veteran',
+    title: 'Master Tracker',
     description: 'Snap and log 50 total meals.',
     icon: '🏆',
     xpReward: 600,
@@ -112,7 +112,6 @@ export function getLevelInfo(xp: number): {
   rankTitle: string;
   rankEmoji: string;
 } {
-  // Progressive curve: Level 1 -> 2 takes 250 XP, scales smoothly
   let level = 1;
   let xpForNext = 250;
   let remainingXp = Math.max(0, xp);
@@ -191,7 +190,6 @@ export function updateStreakOnLog(
 
   if (diffDays === 1) {
     const newStreak = state.streakDays + 1;
-    // Award a Streak Freeze every 7 streak days (max 3 held)
     const bonusFreeze = newStreak % 7 === 0 && state.streakFreezes < 3 ? 1 : 0;
     return {
       streakDays: newStreak,
@@ -202,7 +200,6 @@ export function updateStreakOnLog(
   }
 
   if (diffDays === 2 && state.streakFreezes > 0) {
-    // Missed 1 day, consume a Streak Freeze!
     const newStreak = state.streakDays + 1;
     return {
       streakDays: newStreak,

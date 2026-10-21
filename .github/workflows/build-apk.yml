@@ -73,7 +73,7 @@ jobs:
           tag_name: latest-apk
           name: "CalQuest AI — Latest Android APK (Build #${{ github.run_number }})"
           body: |
-            ### 🥗 CalQuest AI — Gamified Calorie Tracker (`gemini-4-argon`)
+            ### 🥗 CalQuest — Personal Gamified Calorie & Metabolic Tracker
             Download **`CalQuest-AI.apk`** below on your Android phone and tap to install!
             - **Commit:** `${{ github.sha }}`
             - **Built via:** GitHub Actions

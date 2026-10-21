@@ -1,8 +1,3 @@
-export type GeminiModelId =
-  | 'gemini-3.8-flash'
-  | 'gemini-3.5-flash-lite'
-  | 'gemini-4-argon';
-
 export interface MacroBreakdown {
   proteinGrams: number;
   carbsGrams: number;
@@ -40,7 +35,6 @@ export interface MealLog extends GeminiMealAnalysis {
   xpEarned: number;
   portionMultiplier: number;
   userNote?: string;
-  modelUsed?: GeminiModelId;
 }
 
 export interface UserGoals {
@@ -48,6 +42,38 @@ export interface UserGoals {
   proteinGrams: number;
   carbsGrams: number;
   fatGrams: number;
+  fiberGrams: number;
+}
+
+export interface BiometricsProfile {
+  sex: 'male' | 'female';
+  age: number;
+  heightCm: number;
+  weightKg: number;
+  targetWeightKg: number;
+  targetTimelineWeeks: number;
+  bodyFatPct?: number; // optional for Katch-McArdle override
+  activityLevel: 'sedentary' | 'light' | 'moderate' | 'very_active' | 'athlete';
+  resistanceTraining: boolean;
+}
+
+export interface MetabolicCalculationResult {
+  rmrMifflin: number;
+  rmrKatch: number;
+  activeRmr: number;
+  tdee: number;
+  pal: number;
+  estimatedBodyFatPct: number;
+  leanMassKg: number;
+  fatMassKg: number;
+  forbesPartitionP: number;
+  effectiveEnergyDensityKcalPerKg: number;
+  metabolicAdaptationKcal: number;
+  dailyCalorieDelta: number;
+  targetDailyCalories: number;
+  weeklyRateKg: number;
+  isSafetyClamped: boolean;
+  recommendedMacros: MacroBreakdown;
 }
 
 export interface Badge {
@@ -79,6 +105,6 @@ export interface UserState {
   unlockedBadgeIds: string[];
   claimedQuestIdsByDate: Record<string, string[]>;
   goals: UserGoals;
+  biometrics: BiometricsProfile;
   customPromptInstruction: string;
-  selectedModel: GeminiModelId;
 }
