@@ -1,0 +1,84 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Compile CalQuest AI Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Java 21 (required for Android Gradle Plugin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Install NPM dependencies
+        run: npm install
+
+      - name: Build Web App (Vite + TypeScript)
+        env:
+          VITE_GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: npm run build
+
+      - name: Setup & Sync Capacitor Android Platform
+        run: node scripts/setup-android.mjs
+
+      - name: Build Signed Debug APK with Gradle
+        working-directory: ./android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK for easy phone installation
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk CalQuest-AI.apk
+          ls -lh CalQuest-AI.apk
+
+      - name: Upload APK to GitHub Actions Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CalQuest-AI-APK
+          path: CalQuest-AI.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish Latest APK to GitHub Releases
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-apk
+          name: "CalQuest AI — Latest Android APK (Build #${{ github.run_number }})"
+          body: |
+            ### 🥗 CalQuest AI — Gamified Calorie Tracker (`gemini-4-argon`)
+            Download **`CalQuest-AI.apk`** below on your Android phone and tap to install!
+            - **Commit:** `${{ github.sha }}`
+            - **Built via:** GitHub Actions
+          files: CalQuest-AI.apk
+          prerelease: false
+          make_latest: true
