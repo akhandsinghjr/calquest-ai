@@ -1,26 +1,32 @@
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { GoogleGenAI } from '@google/genai';
 import type { GeminiMealAnalysis } from '../types';
 
 const STORAGE_KEY_API = 'calquest_gemini_api_key';
 
+function sanitizeApiKey(raw: string | undefined | null): string {
+  if (!raw) return '';
+  return raw.replace(/[\s"'`]+/g, '').trim();
+}
+
 export function getStoredApiKey(): string {
-  const localKey = localStorage.getItem(STORAGE_KEY_API)?.trim();
+  const localKey = sanitizeApiKey(localStorage.getItem(STORAGE_KEY_API));
   if (localKey) return localKey;
-  const envKey = import.meta.env.VITE_GEMINI_API_KEY?.trim();
-  return envKey || '';
+  const envKey = sanitizeApiKey(import.meta.env.VITE_GEMINI_API_KEY);
+  return envKey;
 }
 
 export function setStoredApiKey(key: string): void {
-  const trimmed = key.trim();
-  if (trimmed) {
-    localStorage.setItem(STORAGE_KEY_API, trimmed);
+  const cleaned = sanitizeApiKey(key);
+  if (cleaned) {
+    localStorage.setItem(STORAGE_KEY_API, cleaned);
   } else {
     localStorage.removeItem(STORAGE_KEY_API);
   }
 }
 
 export function hasBuiltInApiKey(): boolean {
-  return Boolean(import.meta.env.VITE_GEMINI_API_KEY?.trim());
+  return Boolean(sanitizeApiKey(import.meta.env.VITE_GEMINI_API_KEY));
 }
 
 const MEAL_ANALYSIS_SCHEMA = {
@@ -95,6 +101,124 @@ const MEAL_ANALYSIS_SCHEMA = {
   ],
 };
 
+function extractTextFromInteractionResponse(data: Record<string, unknown>): string | null {
+  if (typeof data.output_text === 'string' && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
+  const steps = data.steps as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(steps)) {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const step = steps[i];
+      if (step?.type === 'model_output' && Array.isArray(step.content)) {
+        const texts = (step.content as Array<Record<string, unknown>>)
+          .filter((c) => c?.type === 'text' && typeof c.text === 'string')
+          .map((c) => c.text as string);
+        if (texts.length > 0) {
+          return texts.join('');
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Native Android HTTP bridge fallback using CapacitorHttp.
+ * Bypasses Android WebView CORS restrictions that cause "TypeError: Failed to fetch".
+ */
+async function callInteractionsViaNativeHttp(
+  apiKey: string,
+  payload: Record<string, unknown>
+): Promise<string> {
+  const res = await CapacitorHttp.post({
+    url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+    },
+    data: payload,
+  });
+
+  const responseData =
+    typeof res.data === 'string' ? JSON.parse(res.data) : (res.data as Record<string, unknown>);
+
+  if (res.status < 200 || res.status >= 300) {
+    const errObj = (responseData?.error as Record<string, unknown>) || responseData;
+    const msg =
+      (typeof errObj?.message === 'string' && errObj.message) ||
+      JSON.stringify(errObj) ||
+      `HTTP ${res.status}`;
+    throw new Error(`API Error (${res.status}): ${msg}`);
+  }
+
+  const outputText = extractTextFromInteractionResponse(responseData);
+  if (!outputText) {
+    throw new Error('Model returned an empty response payload.');
+  }
+  return outputText;
+}
+
+export async function testGeminiConnection(overrideKey?: string): Promise<{
+  ok: boolean;
+  message: string;
+  latencyMs: number;
+}> {
+  const apiKey = sanitizeApiKey(overrideKey) || getStoredApiKey();
+  if (!apiKey) {
+    return {
+      ok: false,
+      message: 'No API key entered yet. Paste your key above first.',
+      latencyMs: 0,
+    };
+  }
+
+  const start = Date.now();
+  const payload = {
+    model: 'gemini-3.8-flash',
+    input: 'Reply with the single word READY.',
+  };
+
+  try {
+    if (Capacitor.isNativePlatform()) {
+      const text = await callInteractionsViaNativeHttp(apiKey, payload);
+      return {
+        ok: true,
+        message: `Connected (${text.slice(0, 24).trim()})`,
+        latencyMs: Date.now() - start,
+      };
+    }
+
+    const client = new GoogleGenAI({ apiKey });
+    const interaction = await client.interactions.create(payload);
+    return {
+      ok: true,
+      message: `Connected (${(interaction.output_text || 'OK').slice(0, 24).trim()})`,
+      latencyMs: Date.now() - start,
+    };
+  } catch (err: unknown) {
+    try {
+      const text = await callInteractionsViaNativeHttp(apiKey, payload);
+      return {
+        ok: true,
+        message: `Connected via native HTTP (${text.slice(0, 24).trim()})`,
+        latencyMs: Date.now() - start,
+      };
+    } catch (fallbackErr: unknown) {
+      const msg =
+        fallbackErr instanceof Error
+          ? fallbackErr.message
+          : err instanceof Error
+          ? err.message
+          : String(err);
+      return {
+        ok: false,
+        message: msg,
+        latencyMs: Date.now() - start,
+      };
+    }
+  }
+}
+
 export async function analyzeFoodPhotoWithGemini(params: {
   base64Data: string;
   mimeType: string;
@@ -104,11 +228,11 @@ export async function analyzeFoodPhotoWithGemini(params: {
   const apiKey = getStoredApiKey();
   if (!apiKey) {
     throw new Error(
-      'Missing API Key. Please add your Gemini API key in the Settings tab.'
+      'Missing API Key. Please add your API key in the Settings tab first.'
     );
   }
 
-  const client = new GoogleGenAI({ apiKey });
+  const cleanBase64 = params.base64Data.replace(/^data:image\/[a-zA-Z+]+;base64,/, '').trim();
 
   const promptParts = [
     'Analyze this food photo and calculate its calories and macronutrients accurately.',
@@ -124,34 +248,57 @@ export async function analyzeFoodPhotoWithGemini(params: {
     promptParts.push(`Note about this specific meal: ${params.userNote.trim()}`);
   }
 
-  const interaction = await client.interactions.create({
+  const requestPayload = {
     model: 'gemini-3.8-flash',
     system_instruction:
       'You are CalQuest, an expert visual nutritionist and fitness coach. Break down every meal photo into accurate item-level calorie and macronutrient estimates and return strictly valid JSON matching the requested schema.',
     input: [
       {
-        type: 'text',
+        type: 'text' as const,
         text: promptParts.join('\n'),
       },
       {
-        type: 'image',
-        data: params.base64Data,
-        mime_type: params.mimeType,
+        type: 'image' as const,
+        data: cleanBase64,
+        mime_type: params.mimeType || 'image/jpeg',
       },
     ],
     response_format: {
-      type: 'text',
+      type: 'text' as const,
       mime_type: 'application/json',
       schema: MEAL_ANALYSIS_SCHEMA,
     },
-  });
+  };
 
-  const rawText = interaction.output_text;
+  let rawText: string | null = null;
+
+  if (Capacitor.isNativePlatform()) {
+    // On Android APK, use native CapacitorHttp directly to avoid WebView CORS "TypeError: Failed to fetch"
+    rawText = await callInteractionsViaNativeHttp(apiKey, requestPayload);
+  } else {
+    try {
+      const client = new GoogleGenAI({ apiKey });
+      const interaction = await client.interactions.create(requestPayload);
+      rawText = interaction.output_text || null;
+    } catch (sdkErr: unknown) {
+      // Fallback to CapacitorHttp if browser fetch fails
+      rawText = await callInteractionsViaNativeHttp(apiKey, requestPayload).catch(() => {
+        throw sdkErr;
+      });
+    }
+  }
+
   if (!rawText) {
     throw new Error('Empty response received from vision analysis. Please try snapping the photo again.');
   }
 
-  const parsed = JSON.parse(rawText) as GeminiMealAnalysis;
+  const cleanedJson = rawText
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/, '')
+    .trim();
+
+  const parsed = JSON.parse(cleanedJson) as GeminiMealAnalysis;
 
   const items = (parsed.items || []).map((item) => ({
     ...item,

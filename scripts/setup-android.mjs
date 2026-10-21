@@ -20,6 +20,8 @@ if (fs.existsSync(manifestPath)) {
   let manifest = fs.readFileSync(manifestPath, 'utf8');
 
   const permissionsToEnsure = [
+    '<uses-permission android:name="android.permission.INTERNET" />',
+    '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
     '<uses-permission android:name="android.permission.CAMERA" />',
     '<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />',
     '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
@@ -35,8 +37,15 @@ if (fs.existsSync(manifestPath)) {
     }
   }
 
+  if (!manifest.includes('android:usesCleartextTraffic')) {
+    manifest = manifest.replace(
+      '<application',
+      '<application android:usesCleartextTraffic="true"'
+    );
+  }
+
   fs.writeFileSync(manifestPath, manifest, 'utf8');
-  console.log('Updated AndroidManifest.xml with Camera & Media permissions.');
+  console.log('Updated AndroidManifest.xml with Network, Camera & Media permissions.');
 }
 
 console.log('Syncing web assets to Android project...');

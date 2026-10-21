@@ -34,6 +34,7 @@ import {
   getStoredApiKey,
   hasBuiltInApiKey,
   setStoredApiKey,
+  testGeminiConnection,
 } from './services/geminiService';
 import {
   ALL_BADGES,
@@ -166,6 +167,12 @@ export function App() {
   const [apiKeyInput, setApiKeyInput] = useState(() => getStoredApiKey());
   const [showApiKey, setShowApiKey] = useState(false);
   const [settingsSavedBanner, setSettingsSavedBanner] = useState(false);
+  const [testingApi, setTestingApi] = useState(false);
+  const [apiTestResult, setApiTestResult] = useState<{
+    ok: boolean;
+    message: string;
+    latencyMs: number;
+  } | null>(null);
 
   const cameraFileInputRef = useRef<HTMLInputElement | null>(null);
   const galleryFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -450,6 +457,91 @@ export function App() {
     setStoredApiKey(apiKeyInput);
     setSettingsSavedBanner(true);
     setTimeout(() => setSettingsSavedBanner(false), 2500);
+  }
+
+  async function handleTestApiKey() {
+    setStoredApiKey(apiKeyInput);
+    setTestingApi(true);
+    setApiTestResult(null);
+    try {
+      const res = await testGeminiConnection(apiKeyInput);
+      setApiTestResult(res);
+    } finally {
+      setTestingApi(false);
+    }
+  }
+
+  function handleLoadDemoMealPhoto() {
+    // Generate a realistic illustrated sample meal plate on an HTML5 canvas (Grilled Salmon, Rice & Broccoli)
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Dark table background
+    ctx.fillStyle = '#18181b';
+    ctx.fillRect(0, 0, 512, 512);
+
+    // White ceramic plate
+    ctx.fillStyle = '#f4f4f5';
+    ctx.beginPath();
+    ctx.arc(256, 256, 210, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#d4d4d8';
+    ctx.lineWidth = 8;
+    ctx.stroke();
+
+    // Steamed white rice mound (top left)
+    ctx.fillStyle = '#fafafa';
+    ctx.beginPath();
+    ctx.arc(190, 195, 72, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#e4e4e7';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Grilled salmon fillet (bottom)
+    ctx.fillStyle = '#fb7185';
+    ctx.beginPath();
+    ctx.roundRect(145, 285, 210, 85, 22);
+    ctx.fill();
+    // Grill marks on salmon
+    ctx.strokeStyle = '#9f1239';
+    ctx.lineWidth = 4;
+    for (let x = 175; x <= 325; x += 35) {
+      ctx.beginPath();
+      ctx.moveTo(x, 290);
+      ctx.lineTo(x - 15, 365);
+      ctx.stroke();
+    }
+
+    // Broccoli florets (top right)
+    const florets = [
+      [320, 175, 34],
+      [355, 205, 30],
+      [295, 220, 28],
+    ];
+    for (const [fx, fy, fr] of florets) {
+      ctx.fillStyle = '#16a34a';
+      ctx.beginPath();
+      ctx.arc(fx, fy, fr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+    const base64Data = dataUrl.replace(/^data:image\/[a-zA-Z+]+;base64,/, '');
+
+    setCapturedImage({
+      base64Data,
+      mimeType: 'image/jpeg',
+      dataUrl,
+    });
+    setUserNote('180g grilled salmon fillet, 1 cup steamed white rice, 100g steamed broccoli');
+    setAnalysisResult(null);
+    setAnalysisError(null);
+    setPortionMultiplier(1);
+    setScannerOpen(true);
   }
 
   function handleExportData() {
@@ -757,7 +849,7 @@ export function App() {
               </div>
 
               {/* Camera Action Row (min-h-11 touch targets, solid fills, no gradients) */}
-              <div className="pt-4 border-t border-zinc-800/80 flex gap-2.5">
+              <div className="pt-4 border-t border-zinc-800/80 flex gap-2">
                 <button
                   type="button"
                   onClick={() => handleStartCapture('camera')}
@@ -770,9 +862,17 @@ export function App() {
                   type="button"
                   aria-label="Choose photo from gallery"
                   onClick={() => handleStartCapture('gallery')}
-                  className="min-h-11 min-w-12 bg-zinc-800 hover:bg-zinc-700 active:scale-[0.98] text-zinc-200 font-semibold px-3.5 rounded-2xl flex items-center justify-center border border-zinc-700 transition-transform duration-150 ease-out"
+                  className="min-h-11 min-w-11 bg-zinc-800 hover:bg-zinc-700 active:scale-[0.98] text-zinc-200 font-semibold px-3 rounded-2xl flex items-center justify-center border border-zinc-700 transition-transform duration-150 ease-out"
                 >
                   <ImageIcon className="w-5 h-5 text-emerald-400" />
+                </button>
+                <button
+                  type="button"
+                  title="Load a sample meal image to test scanning"
+                  onClick={handleLoadDemoMealPhoto}
+                  className="min-h-11 bg-zinc-800 hover:bg-zinc-700 active:scale-[0.98] text-zinc-300 text-xs font-bold px-3 rounded-2xl flex items-center justify-center border border-zinc-700 transition-transform duration-150 ease-out"
+                >
+                  Sample
                 </button>
               </div>
             </section>
@@ -1476,6 +1576,29 @@ export function App() {
                 >
                   {showApiKey ? 'Hide' : 'Show'}
                 </button>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={testingApi}
+                  onClick={handleTestApiKey}
+                  className="min-h-10 px-3.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-xs font-bold text-emerald-400 border border-zinc-700"
+                >
+                  {testingApi ? 'Testing Connection...' : 'Test API Connection'}
+                </button>
+                {apiTestResult && (
+                  <span
+                    className={cn(
+                      'text-xs font-semibold tabular-nums',
+                      apiTestResult.ok ? 'text-emerald-400' : 'text-rose-400'
+                    )}
+                  >
+                    {apiTestResult.ok
+                      ? `✓ ${apiTestResult.message} (${apiTestResult.latencyMs}ms)`
+                      : `✕ ${apiTestResult.message}`}
+                  </span>
+                )}
               </div>
             </div>
 
