@@ -1,3 +1,8 @@
+export type GeminiModelId =
+  | 'gemini-3.8-flash'
+  | 'gemini-3.5-flash-lite'
+  | 'gemini-4-argon';
+
 export interface MacroBreakdown {
   proteinGrams: number;
   carbsGrams: number;
@@ -35,6 +40,7 @@ export interface MealLog extends GeminiMealAnalysis {
   xpEarned: number;
   portionMultiplier: number;
   userNote?: string;
+  modelUsed?: GeminiModelId;
 }
 
 export interface UserGoals {
@@ -74,4 +80,5 @@ export interface UserState {
   claimedQuestIdsByDate: Record<string, string[]>;
   goals: UserGoals;
   customPromptInstruction: string;
+  selectedModel: GeminiModelId;
 }

@@ -1,35 +1,84 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import confetti from 'canvas-confetti';
 import {
-  Award,
-  Camera as CameraIcon,
-  CheckCircle2,
-  ChevronRight,
-  Download,
-  Flame,
-  History,
-  Image as ImageIcon,
-  KeyRound,
-  Plus,
-  Settings as SettingsIcon,
-  Shield,
-  Sparkles,
-  Target,
-  Trash2,
-  Trophy,
-  Upload,
-  Utensils,
-  X,
-  Zap,
-} from 'lucide-react';
+  Alert,
+  AppBar,
+  Avatar,
+  Box,
+  BottomNavigation,
+  BottomNavigationAction,
+  Button,
+  Card,
+  CardContent,
+  Checkbox,
+  Chip,
+  CircularProgress,
+  Collapse,
+  Container,
+  Dialog,
+  DialogContent,
+  Divider,
+  Fab,
+  IconButton,
+  InputAdornment,
+  LinearProgress,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  MenuItem,
+  Paper,
+  Slider,
+  Slide,
+  Snackbar,
+  Stack,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Toolbar,
+  Tooltip,
+  Typography,
+  alpha,
+} from '@mui/material';
+import type { TransitionProps } from '@mui/material/transitions';
+import {
+  AcUnitRounded,
+  AddAPhotoRounded,
+  AutoAwesomeRounded,
+  BoltRounded,
+  CheckCircleRounded,
+  CloseRounded,
+  DeleteOutlineRounded,
+  EmojiEventsRounded,
+  ExpandMoreRounded,
+  FileDownloadRounded,
+  FileUploadRounded,
+  FitnessCenterRounded,
+  GrassRounded,
+  HistoryRounded,
+  KeyRounded,
+  LocalFireDepartmentRounded,
+  MemoryRounded,
+  OpacityRounded,
+  PhotoCameraRounded,
+  PhotoLibraryRounded,
+  RestaurantMenuRounded,
+  SettingsRounded,
+  TrackChangesRounded,
+  VisibilityOffRounded,
+  VisibilityRounded,
+} from '@mui/icons-material';
 import { Capacitor } from '@capacitor/core';
 import type {
   Badge,
   GeminiMealAnalysis,
+  GeminiModelId,
   MealLog,
   UserState,
 } from './types';
 import {
+  AVAILABLE_GEMINI_MODELS,
   analyzeFoodPhotoWithGemini,
   getStoredApiKey,
   hasBuiltInApiKey,
@@ -68,10 +117,19 @@ const DEFAULT_USER_STATE: UserState = {
     fatGrams: 70,
   },
   customPromptInstruction: '',
+  selectedModel: 'gemini-3.8-flash',
 };
+
+const SlideUpTransition = React.forwardRef(function Transition(
+  props: TransitionProps & { children: React.ReactElement },
+  ref: React.Ref<unknown>
+) {
+  return <Slide direction="up" ref={ref} {...props} />;
+});
 
 export function App() {
   const [activeTab, setActiveTab] = useState<'today' | 'quests' | 'history' | 'settings'>('today');
+  const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
 
   const [userState, setUserState] = useState<UserState>(() => {
     try {
@@ -97,7 +155,6 @@ export function App() {
     return [];
   });
 
-  // Persist state & meals
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(userState));
@@ -142,12 +199,14 @@ export function App() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [settingsSavedBanner, setSettingsSavedBanner] = useState(false);
 
-  // Hidden file inputs for web/fallback camera & gallery
   const cameraFileInputRef = useRef<HTMLInputElement | null>(null);
   const galleryFileInputRef = useRef<HTMLInputElement | null>(null);
   const importJsonInputRef = useRef<HTMLInputElement | null>(null);
 
   const todayKey = getLocalDateKey();
+  const activeModelMeta =
+    AVAILABLE_GEMINI_MODELS.find((m) => m.id === userState.selectedModel) ||
+    AVAILABLE_GEMINI_MODELS[0];
 
   const todayMeals = useMemo(
     () => meals.filter((m) => m.dateKey === todayKey),
@@ -180,7 +239,6 @@ export function App() {
     [userState.claimedQuestIdsByDate, todayKey]
   );
 
-  // Adjusted analysis metrics based on toggled items & portion multiplier
   const adjustedAnalysis = useMemo(() => {
     if (!analysisResult) return null;
     const includedItems = analysisResult.items.filter((i) => i.included !== false);
@@ -213,20 +271,17 @@ export function App() {
   function triggerConfetti() {
     try {
       confetti({
-        particleCount: 65,
-        spread: 70,
+        particleCount: 70,
+        spread: 75,
         origin: { y: 0.7 },
       });
     } catch {
-      // ignore if canvas-confetti fails
+      // ignore
     }
   }
 
   function showRewardToast(title: string, subtitle: string, xp: number) {
     setCelebrationToast({ title, subtitle, xp });
-    setTimeout(() => {
-      setCelebrationToast((prev) => (prev?.title === title ? null : prev));
-    }, 4200);
   }
 
   async function handleStartCapture(mode: 'camera' | 'gallery') {
@@ -279,13 +334,14 @@ export function App() {
       const result = await analyzeFoodPhotoWithGemini({
         base64Data: capturedImage.base64Data,
         mimeType: capturedImage.mimeType,
+        model: userState.selectedModel,
         userNote,
         customInstruction: userState.customPromptInstruction,
       });
       setAnalysisResult(result);
     } catch (err: unknown) {
       setAnalysisError(
-        err instanceof Error ? err.message : 'Failed to analyze image with Gemini 4 Argon.'
+        err instanceof Error ? err.message : `Failed to analyze image with ${activeModelMeta.name}.`
       );
     } finally {
       setIsAnalyzing(false);
@@ -324,12 +380,12 @@ export function App() {
       xpEarned: xpBreakdown.totalXp,
       portionMultiplier,
       userNote: userNote.trim() || undefined,
+      modelUsed: userState.selectedModel,
     };
 
     const updatedMeals = [newMeal, ...meals];
     const updatedTodayMeals = [newMeal, ...todayMeals];
 
-    // Update streak
     const streakUpdate = updateStreakOnLog(userState, todayKey);
 
     const tempState: UserState = {
@@ -340,7 +396,6 @@ export function App() {
       lastLoggedDate: todayKey,
     };
 
-    // Check newly unlocked badges
     const newBadges: Badge[] = evaluateNewlyUnlockedBadges(
       updatedMeals,
       updatedTodayMeals,
@@ -404,7 +459,6 @@ export function App() {
     e.preventDefault();
     setStoredApiKey(apiKeyInput);
     setSettingsSavedBanner(true);
-    setTimeout(() => setSettingsSavedBanner(false), 2500);
   }
 
   function handleExportData() {
@@ -436,7 +490,7 @@ export function App() {
         if (data.userState && Array.isArray(data.meals)) {
           setUserState({ ...DEFAULT_USER_STATE, ...data.userState });
           setMeals(data.meals);
-          alert('Backup restored successfully!');
+          showRewardToast('Backup Restored!', 'All meals, XP, and streaks loaded', 0);
         } else {
           alert('Invalid backup JSON file.');
         }
@@ -452,1026 +506,1582 @@ export function App() {
     Math.round((todayTotals.calories / Math.max(1, userState.goals.dailyCalories)) * 100)
   );
   const caloriesRemaining = userState.goals.dailyCalories - todayTotals.calories;
-  const ringRadius = 58;
-  const ringCircumference = 2 * Math.PI * ringRadius;
-  const ringOffset =
-    ringCircumference - (Math.min(100, caloriePercent) / 100) * ringCircumference;
-
   const hasApiKeyConfigured = Boolean(getStoredApiKey());
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col max-w-md mx-auto relative pb-24 shadow-2xl border-x border-slate-900">
-      {/* Hidden File Inputs for Web & Fallback Camera */}
+    <Box
+      sx={{
+        minHeight: '100vh',
+        bgcolor: 'background.default',
+        pb: 12,
+        maxWidth: 480,
+        mx: 'auto',
+        position: 'relative',
+        boxShadow: '0 0 60px rgba(0,0,0,0.8)',
+      }}
+    >
+      {/* Hidden File Inputs */}
       <input
         ref={cameraFileInputRef}
         type="file"
         accept="image/*"
         capture="environment"
-        className="hidden"
+        hidden
         onChange={handleFileSelected}
       />
       <input
         ref={galleryFileInputRef}
         type="file"
         accept="image/*"
-        className="hidden"
+        hidden
         onChange={handleFileSelected}
       />
       <input
         ref={importJsonInputRef}
         type="file"
         accept="application/json"
-        className="hidden"
+        hidden
         onChange={handleImportData}
       />
 
-      {/* Celebration Toast */}
-      {celebrationToast && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-sm bg-gradient-to-r from-emerald-600 to-teal-600 text-white p-3.5 rounded-2xl shadow-2xl border border-emerald-400/40 flex items-center justify-between animate-bounce-short">
-          <div className="pr-2">
-            <p className="font-bold text-sm">{celebrationToast.title}</p>
-            <p className="text-xs text-emerald-100">{celebrationToast.subtitle}</p>
-          </div>
-          <div className="bg-slate-950/30 px-3 py-1.5 rounded-xl font-extrabold text-xs whitespace-nowrap border border-white/20">
-            +{celebrationToast.xp} XP
-          </div>
-        </div>
-      )}
+      {/* Celebratory Material Snackbar */}
+      <Snackbar
+        open={Boolean(celebrationToast)}
+        autoHideDuration={4000}
+        onClose={() => setCelebrationToast(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Paper
+          elevation={8}
+          sx={{
+            px: 2.5,
+            py: 1.5,
+            borderRadius: 4,
+            background: 'linear-gradient(135deg, #059669 0%, #0D9488 100%)',
+            border: '1px solid rgba(52, 211, 153, 0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            color: '#fff',
+          }}
+        >
+          <Box>
+            <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+              {celebrationToast?.title}
+            </Typography>
+            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.85)' }}>
+              {celebrationToast?.subtitle}
+            </Typography>
+          </Box>
+          {celebrationToast && celebrationToast.xp > 0 && (
+            <Chip
+              label={`+${celebrationToast.xp} XP`}
+              size="small"
+              sx={{
+                bgcolor: 'rgba(0,0,0,0.35)',
+                color: '#A7F3D0',
+                fontWeight: 800,
+              }}
+            />
+          )}
+        </Paper>
+      </Snackbar>
 
-      {/* Top Gamification Header */}
-      <header className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-slate-800/80 px-4 py-3">
-        <div className="flex items-center justify-between gap-2">
-          {/* Brand & Rank */}
-          <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center text-xl shadow-inner">
-              {levelInfo.rankEmoji}
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-400">
-                  Lv.{levelInfo.level}
-                </span>
-                <span className="text-xs font-semibold text-slate-300">
-                  {levelInfo.rankTitle}
-                </span>
-              </div>
-              {/* XP Bar */}
-              <div className="w-32 h-2 bg-slate-800 rounded-full overflow-hidden mt-1">
-                <div
-                  className="h-full bg-gradient-to-r from-emerald-400 to-teal-400 transition-all duration-500"
-                  style={{ width: `${levelInfo.progressPercent}%` }}
-                />
-              </div>
-              <p className="text-[10px] text-slate-400 mt-0.5">
-                {levelInfo.currentLevelXp} / {levelInfo.nextLevelXp} XP
-              </p>
-            </div>
-          </div>
-
-          {/* Streak & Freeze Shields */}
-          <div className="flex items-center gap-2">
-            <div
-              title="Streak Freeze Shields (protects your streak if you miss 1 day)"
-              className="flex items-center gap-1 bg-sky-950/60 border border-sky-500/30 px-2.5 py-1.5 rounded-xl text-xs font-bold text-sky-300"
+      {/* Material AppBar Header */}
+      <AppBar
+        position="sticky"
+        elevation={0}
+        sx={{
+          bgcolor: alpha('#0B0F19', 0.85),
+          backdropFilter: 'blur(16px)',
+          borderBottom: '1px solid rgba(148, 163, 184, 0.12)',
+        }}
+      >
+        <Toolbar sx={{ justifyContent: 'space-between', px: 2, py: 1 }}>
+          <Stack direction="row" spacing={1.5} alignItems="center">
+            <Avatar
+              sx={{
+                width: 44,
+                height: 44,
+                borderRadius: 3.5,
+                bgcolor: alpha('#10B981', 0.15),
+                border: '1px solid',
+                borderColor: alpha('#10B981', 0.35),
+                fontSize: '1.35rem',
+              }}
             >
-              <Shield className="w-3.5 h-3.5 text-sky-400 fill-sky-400/20" />
-              <span>{userState.streakFreezes}</span>
-            </div>
-            <div className="flex items-center gap-1 bg-amber-950/60 border border-amber-500/40 px-3 py-1.5 rounded-xl text-xs font-extrabold text-amber-300">
-              <Flame className="w-4 h-4 text-orange-400 fill-orange-400" />
-              <span>{userState.streakDays}d</span>
-            </div>
-          </div>
-        </div>
-      </header>
+              {levelInfo.rankEmoji}
+            </Avatar>
+            <Box sx={{ minWidth: 135 }}>
+              <Stack direction="row" spacing={0.8} alignItems="center">
+                <Chip
+                  label={`Lv.${levelInfo.level}`}
+                  size="small"
+                  color="primary"
+                  sx={{ height: 20, fontSize: '0.68rem', fontWeight: 800 }}
+                />
+                <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.primary' }}>
+                  {levelInfo.rankTitle}
+                </Typography>
+              </Stack>
+              <LinearProgress
+                variant="determinate"
+                value={levelInfo.progressPercent}
+                sx={{ mt: 0.7, height: 6 }}
+              />
+              <Typography
+                variant="caption"
+                sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mt: 0.3 }}
+              >
+                {levelInfo.currentLevelXp} / {levelInfo.nextLevelXp} XP
+              </Typography>
+            </Box>
+          </Stack>
 
-      {/* Missing API Key Banner */}
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Tooltip title="Streak Freeze Shields (protects your streak if you miss a day)">
+              <Chip
+                icon={<AcUnitRounded sx={{ fontSize: '1rem !important', color: '#38BDF8 !important' }} />}
+                label={userState.streakFreezes}
+                size="small"
+                sx={{
+                  bgcolor: alpha('#38BDF8', 0.12),
+                  color: '#BAE6FD',
+                  border: '1px solid',
+                  borderColor: alpha('#38BDF8', 0.3),
+                }}
+              />
+            </Tooltip>
+            <Chip
+              icon={
+                <LocalFireDepartmentRounded
+                  sx={{ fontSize: '1.1rem !important', color: '#FB923C !important' }}
+                />
+              }
+              label={`${userState.streakDays}d`}
+              size="small"
+              sx={{
+                bgcolor: alpha('#F59E0B', 0.15),
+                color: '#FDE68A',
+                border: '1px solid',
+                borderColor: alpha('#F59E0B', 0.35),
+                fontWeight: 800,
+              }}
+            />
+          </Stack>
+        </Toolbar>
+      </AppBar>
+
+      {/* Missing API Key Alert */}
       {!hasApiKeyConfigured && activeTab !== 'settings' && (
-        <div className="mx-4 mt-3 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5 text-xs text-amber-200">
-            <KeyRound className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>Add your Gemini API key in Settings to scan food photos.</span>
-          </div>
-          <button
-            onClick={() => setActiveTab('settings')}
-            className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs shrink-0"
+        <Box sx={{ px: 2, pt: 2 }}>
+          <Alert
+            severity="warning"
+            variant="outlined"
+            icon={<KeyRounded />}
+            action={
+              <Button
+                color="warning"
+                size="small"
+                variant="contained"
+                onClick={() => setActiveTab('settings')}
+              >
+                Setup
+              </Button>
+            }
+            sx={{ borderRadius: 3 }}
           >
-            Setup
-          </button>
-        </div>
+            Add your free Google AI Studio key in Settings to scan food photos.
+          </Alert>
+        </Box>
       )}
 
-      {/* Main Content Area */}
-      <main className="flex-1 px-4 pt-4 space-y-5">
+      {/* Main Content Container */}
+      <Container maxWidth="sm" sx={{ px: 2, pt: 2.5 }}>
         {activeTab === 'today' && (
-          <>
-            {/* Hero Calorie & Macro Card */}
-            <section className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-xl relative overflow-hidden">
-              <div className="flex items-center justify-between gap-4">
-                {/* Circular Progress Ring */}
-                <div className="relative w-36 h-36 flex items-center justify-center shrink-0">
-                  <svg className="w-full h-full -rotate-90" viewBox="0 0 140 140">
-                    <circle
-                      cx="70"
-                      cy="70"
-                      r={ringRadius}
-                      stroke="currentColor"
-                      strokeWidth="12"
-                      fill="transparent"
-                      className="text-slate-800"
+          <Stack spacing={3}>
+            {/* Hero Calorie & Macro Material Card */}
+            <Card elevation={0}>
+              <CardContent sx={{ p: 2.5 }}>
+                <Stack direction="row" spacing={2.5} alignItems="center">
+                  {/* Dual Layered CircularProgress Ring */}
+                  <Box sx={{ position: 'relative', display: 'inline-flex' }}>
+                    <CircularProgress
+                      variant="determinate"
+                      value={100}
+                      size={136}
+                      thickness={4.5}
+                      sx={{ color: 'rgba(148, 163, 184, 0.14)' }}
                     />
-                    <circle
-                      cx="70"
-                      cy="70"
-                      r={ringRadius}
-                      stroke="currentColor"
-                      strokeWidth="12"
-                      strokeDasharray={ringCircumference}
-                      strokeDashoffset={ringOffset}
-                      strokeLinecap="round"
-                      fill="transparent"
-                      className={
-                        caloriesRemaining >= 0
-                          ? 'text-emerald-400 transition-all duration-700'
-                          : 'text-rose-400 transition-all duration-700'
-                      }
+                    <CircularProgress
+                      variant="determinate"
+                      value={caloriePercent}
+                      size={136}
+                      thickness={4.5}
+                      color={caloriesRemaining >= 0 ? 'primary' : 'error'}
+                      sx={{
+                        position: 'absolute',
+                        left: 0,
+                        '& .MuiCircularProgress-circle': {
+                          strokeLinecap: 'round',
+                        },
+                      }}
                     />
-                  </svg>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                    <span className="text-2xl font-black tracking-tight text-white">
-                      {Math.abs(caloriesRemaining)}
-                    </span>
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                      {caloriesRemaining >= 0 ? 'kcal left' : 'kcal over'}
-                    </span>
-                    <span className="text-[10px] text-slate-500 mt-0.5">
-                      {todayTotals.calories} / {userState.goals.dailyCalories}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Macro Bars */}
-                <div className="flex-1 space-y-3">
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="font-semibold text-rose-300">Protein</span>
-                      <span className="text-slate-400 font-mono">
-                        {todayTotals.protein}g / {userState.goals.proteinGrams}g
-                      </span>
-                    </div>
-                    <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-rose-400 rounded-full transition-all"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            (todayTotals.protein / Math.max(1, userState.goals.proteinGrams)) * 100
-                          )}%`,
+                    <Box
+                      sx={{
+                        top: 0,
+                        left: 0,
+                        bottom: 0,
+                        right: 0,
+                        position: 'absolute',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Typography variant="h5" sx={{ fontWeight: 900, lineHeight: 1.1 }}>
+                        {Math.abs(caloriesRemaining)}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          textTransform: 'uppercase',
+                          fontWeight: 700,
+                          color: 'text.secondary',
+                          fontSize: '0.65rem',
+                          letterSpacing: '0.05em',
+                        }}
+                      >
+                        {caloriesRemaining >= 0 ? 'kcal left' : 'kcal over'}
+                      </Typography>
+                      <Chip
+                        label={`${todayTotals.calories} / ${userState.goals.dailyCalories}`}
+                        size="small"
+                        sx={{
+                          mt: 0.6,
+                          height: 18,
+                          fontSize: '0.62rem',
+                          bgcolor: 'rgba(15, 23, 42, 0.7)',
                         }}
                       />
-                    </div>
-                  </div>
+                    </Box>
+                  </Box>
 
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="font-semibold text-amber-300">Carbs</span>
-                      <span className="text-slate-400 font-mono">
-                        {todayTotals.carbs}g / {userState.goals.carbsGrams}g
-                      </span>
-                    </div>
-                    <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-amber-400 rounded-full transition-all"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            (todayTotals.carbs / Math.max(1, userState.goals.carbsGrams)) * 100
-                          )}%`,
-                        }}
+                  {/* Macro Breakdown Bars */}
+                  <Stack spacing={1.5} sx={{ flex: 1 }}>
+                    <Box>
+                      <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.4 }}>
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          <FitnessCenterRounded sx={{ fontSize: 14, color: '#FB7185' }} />
+                          <Typography variant="caption" sx={{ fontWeight: 700, color: '#FDA4AF' }}>
+                            Protein
+                          </Typography>
+                        </Stack>
+                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                          {todayTotals.protein}g / {userState.goals.proteinGrams}g
+                        </Typography>
+                      </Stack>
+                      <LinearProgress
+                        variant="determinate"
+                        color="error"
+                        value={Math.min(
+                          100,
+                          (todayTotals.protein / Math.max(1, userState.goals.proteinGrams)) * 100
+                        )}
                       />
-                    </div>
-                  </div>
+                    </Box>
 
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="font-semibold text-sky-300">Fats</span>
-                      <span className="text-slate-400 font-mono">
-                        {todayTotals.fat}g / {userState.goals.fatGrams}g
-                      </span>
-                    </div>
-                    <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-sky-400 rounded-full transition-all"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            (todayTotals.fat / Math.max(1, userState.goals.fatGrams)) * 100
-                          )}%`,
-                        }}
+                    <Box>
+                      <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.4 }}>
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          <BoltRounded sx={{ fontSize: 15, color: '#FBBF24' }} />
+                          <Typography variant="caption" sx={{ fontWeight: 700, color: '#FDE68A' }}>
+                            Carbs
+                          </Typography>
+                        </Stack>
+                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                          {todayTotals.carbs}g / {userState.goals.carbsGrams}g
+                        </Typography>
+                      </Stack>
+                      <LinearProgress
+                        variant="determinate"
+                        color="secondary"
+                        value={Math.min(
+                          100,
+                          (todayTotals.carbs / Math.max(1, userState.goals.carbsGrams)) * 100
+                        )}
                       />
-                    </div>
-                  </div>
-                </div>
-              </div>
+                    </Box>
 
-              {/* Quick Camera CTA Bar */}
-              <div className="mt-5 pt-4 border-t border-slate-800/80 flex gap-2.5">
-                <button
-                  onClick={() => handleStartCapture('camera')}
-                  className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 active:scale-[0.99] text-slate-950 font-extrabold py-3 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition"
-                >
-                  <CameraIcon className="w-5 h-5" />
-                  <span>Snap Food Photo</span>
-                </button>
-                <button
-                  onClick={() => handleStartCapture('gallery')}
-                  className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold py-3 px-4 rounded-2xl flex items-center justify-center gap-1.5 border border-slate-700 transition"
-                  title="Pick food photo from gallery"
-                >
-                  <ImageIcon className="w-5 h-5 text-emerald-400" />
-                </button>
-              </div>
-            </section>
+                    <Box>
+                      <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.4 }}>
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          <OpacityRounded sx={{ fontSize: 14, color: '#38BDF8' }} />
+                          <Typography variant="caption" sx={{ fontWeight: 700, color: '#BAE6FD' }}>
+                            Fats
+                          </Typography>
+                        </Stack>
+                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                          {todayTotals.fat}g / {userState.goals.fatGrams}g
+                        </Typography>
+                      </Stack>
+                      <LinearProgress
+                        variant="determinate"
+                        color="info"
+                        value={Math.min(
+                          100,
+                          (todayTotals.fat / Math.max(1, userState.goals.fatGrams)) * 100
+                        )}
+                      />
+                    </Box>
+                  </Stack>
+                </Stack>
 
-            {/* Active Daily Quests Strip */}
-            <section className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <Zap className="w-4 h-4 text-amber-400" />
-                  Daily Quests
-                </h2>
-                <button
+                <Divider sx={{ my: 2.2 }} />
+
+                {/* Material Camera Action Buttons */}
+                <Stack direction="row" spacing={1.5}>
+                  <Button
+                    fullWidth
+                    variant="contained"
+                    color="primary"
+                    size="large"
+                    startIcon={<PhotoCameraRounded />}
+                    onClick={() => handleStartCapture('camera')}
+                  >
+                    Snap Food Photo
+                  </Button>
+                  <Tooltip title="Upload food photo from gallery">
+                    <Button
+                      variant="outlined"
+                      color="primary"
+                      onClick={() => handleStartCapture('gallery')}
+                      sx={{ minWidth: 52, px: 1.5 }}
+                    >
+                      <PhotoLibraryRounded />
+                    </Button>
+                  </Tooltip>
+                </Stack>
+              </CardContent>
+            </Card>
+
+            {/* Daily Quests Section */}
+            <Box>
+              <Stack
+                direction="row"
+                justifyContent="space-between"
+                alignItems="center"
+                sx={{ mb: 1.2 }}
+              >
+                <Stack direction="row" spacing={0.8} alignItems="center">
+                  <BoltRounded color="secondary" fontSize="small" />
+                  <Typography
+                    variant="overline"
+                    sx={{ fontWeight: 800, letterSpacing: '0.08em', color: 'text.secondary' }}
+                  >
+                    Daily Quests
+                  </Typography>
+                </Stack>
+                <Button
+                  size="small"
+                  color="primary"
                   onClick={() => setActiveTab('quests')}
-                  className="text-xs text-emerald-400 font-semibold flex items-center hover:underline"
+                  sx={{ py: 0.2 }}
                 >
-                  All Badges <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
+                  View All ({dailyQuests.length})
+                </Button>
+              </Stack>
 
-              <div className="grid grid-cols-1 gap-2">
+              <Stack spacing={1.2}>
                 {dailyQuests.slice(0, 2).map((q) => {
                   const isClaimed = claimedTodaySet.has(q.id);
                   return (
-                    <div
-                      key={q.id}
-                      className="bg-slate-900/70 border border-slate-800/90 rounded-2xl p-3 flex items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="text-2xl">{q.icon}</div>
-                        <div>
-                          <p className="text-xs font-bold text-slate-100">{q.title}</p>
-                          <p className="text-[11px] text-slate-400">{q.description}</p>
-                        </div>
-                      </div>
-                      {isClaimed ? (
-                        <span className="text-xs font-bold text-emerald-400 flex items-center gap-1 px-2.5 py-1 bg-emerald-950/60 rounded-xl border border-emerald-500/30">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Claimed
-                        </span>
-                      ) : q.completed ? (
-                        <button
-                          onClick={() => handleClaimQuest(q.id, q.xpReward, q.title)}
-                          className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs shadow animate-pulse"
-                        >
-                          Claim +{q.xpReward} XP
-                        </button>
-                      ) : (
-                        <span className="text-xs font-mono text-slate-400 bg-slate-800/80 px-2.5 py-1 rounded-xl">
-                          {q.progress}/{q.target}
-                        </span>
-                      )}
-                    </div>
+                    <Card key={q.id} elevation={0}>
+                      <CardContent
+                        sx={{
+                          p: 1.8,
+                          '&:last-child': { pb: 1.8 },
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 1.5,
+                        }}
+                      >
+                        <Stack direction="row" spacing={1.5} alignItems="center">
+                          <Avatar
+                            sx={{
+                              bgcolor: 'rgba(15, 23, 42, 0.7)',
+                              width: 42,
+                              height: 42,
+                              fontSize: '1.3rem',
+                            }}
+                          >
+                            {q.icon}
+                          </Avatar>
+                          <Box>
+                            <Typography variant="subtitle2">{q.title}</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {q.description}
+                            </Typography>
+                          </Box>
+                        </Stack>
+
+                        {isClaimed ? (
+                          <Chip
+                            icon={<CheckCircleRounded />}
+                            label="Claimed"
+                            color="success"
+                            size="small"
+                            variant="outlined"
+                          />
+                        ) : q.completed ? (
+                          <Button
+                            variant="contained"
+                            color="secondary"
+                            size="small"
+                            onClick={() => handleClaimQuest(q.id, q.xpReward, q.title)}
+                          >
+                            +{q.xpReward} XP
+                          </Button>
+                        ) : (
+                          <Chip
+                            label={`${q.progress}/${q.target}`}
+                            size="small"
+                            sx={{ bgcolor: 'rgba(15, 23, 42, 0.75)' }}
+                          />
+                        )}
+                      </CardContent>
+                    </Card>
                   );
                 })}
-              </div>
-            </section>
+              </Stack>
+            </Box>
 
-            {/* Today's Logged Meals */}
-            <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <Utensils className="w-4 h-4 text-emerald-400" />
+            {/* Today's Meals Timeline */}
+            <Box>
+              <Stack direction="row" spacing={0.8} alignItems="center" sx={{ mb: 1.2 }}>
+                <RestaurantMenuRounded color="primary" fontSize="small" />
+                <Typography
+                  variant="overline"
+                  sx={{ fontWeight: 800, letterSpacing: '0.08em', color: 'text.secondary' }}
+                >
                   Today&apos;s Meals ({todayMeals.length})
-                </h2>
-              </div>
+                </Typography>
+              </Stack>
 
               {todayMeals.length === 0 ? (
-                <div className="bg-slate-900/50 border border-dashed border-slate-800 rounded-3xl p-8 text-center space-y-2">
-                  <div className="text-4xl">🍱</div>
-                  <p className="text-sm font-semibold text-slate-300">No meals logged today yet</p>
-                  <p className="text-xs text-slate-500 max-w-xs mx-auto">
-                    Snap a photo of your plate and let Gemini 4 Argon calculate the calories &amp;
-                    macros automatically!
-                  </p>
-                </div>
+                <Card
+                  elevation={0}
+                  sx={{
+                    borderStyle: 'dashed',
+                    textAlign: 'center',
+                    py: 4,
+                    px: 2,
+                  }}
+                >
+                  <Typography sx={{ fontSize: '2.5rem', mb: 1 }}>🍱</Typography>
+                  <Typography variant="subtitle1">No meals logged today yet</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 280, mx: 'auto', mt: 0.5 }}>
+                    Tap the camera button below to snap a photo and calculate your calories &amp; macros!
+                  </Typography>
+                </Card>
               ) : (
-                <div className="space-y-3">
-                  {todayMeals.map((meal) => (
-                    <div
-                      key={meal.id}
-                      className="bg-slate-900/90 border border-slate-800 rounded-2xl p-3.5 space-y-2.5 shadow"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          {meal.photoDataUrl ? (
-                            <img
-                              src={meal.photoDataUrl}
-                              alt={meal.mealName}
-                              className="w-14 h-14 rounded-xl object-cover border border-slate-700 shrink-0"
-                            />
-                          ) : (
-                            <div className="w-14 h-14 rounded-xl bg-slate-800 flex items-center justify-center text-2xl shrink-0">
-                              {meal.emoji}
-                            </div>
-                          )}
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
-                                {meal.mealType}
-                              </span>
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/30">
-                                +{meal.xpEarned} XP
-                              </span>
-                            </div>
-                            <h3 className="font-bold text-sm text-white mt-1">
-                              {meal.emoji} {meal.mealName}
-                            </h3>
-                            <p className="text-xs text-slate-400">
-                              P: {meal.macros.proteinGrams}g • C: {meal.macros.carbsGrams}g • F:{' '}
-                              {meal.macros.fatGrams}g
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="text-right shrink-0">
-                          <span className="text-base font-black text-emerald-400">
-                            {meal.totalCalories}
-                          </span>
-                          <span className="block text-[10px] text-slate-400 uppercase">kcal</span>
-                          <button
-                            onClick={() => handleDeleteMeal(meal.id)}
-                            className="text-slate-600 hover:text-rose-400 mt-1 p-1"
-                            title="Delete meal"
+                <Stack spacing={1.5}>
+                  {todayMeals.map((meal) => {
+                    const isExpanded = expandedMealId === meal.id;
+                    return (
+                      <Card key={meal.id} elevation={0}>
+                        <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                          <Stack
+                            direction="row"
+                            justifyContent="space-between"
+                            alignItems="flex-start"
+                            spacing={1.5}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
+                            <Stack direction="row" spacing={1.5} alignItems="center">
+                              <Avatar
+                                src={meal.photoDataUrl}
+                                variant="rounded"
+                                sx={{
+                                  width: 58,
+                                  height: 58,
+                                  borderRadius: 3,
+                                  bgcolor: 'rgba(15, 23, 42, 0.8)',
+                                  fontSize: '1.6rem',
+                                }}
+                              >
+                                {meal.emoji}
+                              </Avatar>
+                              <Box>
+                                <Stack direction="row" spacing={0.8} alignItems="center">
+                                  <Chip
+                                    label={meal.mealType.toUpperCase()}
+                                    size="small"
+                                    sx={{
+                                      height: 20,
+                                      fontSize: '0.62rem',
+                                      bgcolor: 'rgba(148, 163, 184, 0.14)',
+                                    }}
+                                  />
+                                  <Chip
+                                    label={`+${meal.xpEarned} XP`}
+                                    size="small"
+                                    color="primary"
+                                    variant="outlined"
+                                    sx={{ height: 20, fontSize: '0.62rem' }}
+                                  />
+                                </Stack>
+                                <Typography variant="subtitle1" sx={{ mt: 0.5, lineHeight: 1.25 }}>
+                                  {meal.emoji} {meal.mealName}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  P: {meal.macros.proteinGrams}g • C: {meal.macros.carbsGrams}g • F:{' '}
+                                  {meal.macros.fatGrams}g • Score: {meal.healthScore}/100
+                                </Typography>
+                              </Box>
+                            </Stack>
 
-                      {meal.wittyFeedback && (
-                        <p className="text-xs text-slate-300 bg-slate-950/60 px-3 py-2 rounded-xl border border-slate-800/80 italic">
-                          &ldquo;{meal.wittyFeedback}&rdquo;
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                            <Box sx={{ textAlign: 'right' }}>
+                              <Typography variant="h6" color="primary.light" sx={{ lineHeight: 1.1 }}>
+                                {meal.totalCalories}
+                              </Typography>
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                sx={{ display: 'block', fontSize: '0.65rem' }}
+                              >
+                                KCAL
+                              </Typography>
+                              <Stack direction="row" justifyContent="flex-end" sx={{ mt: 0.5 }}>
+                                <IconButton
+                                  size="small"
+                                  onClick={() =>
+                                    setExpandedMealId(isExpanded ? null : meal.id)
+                                  }
+                                >
+                                  <ExpandMoreRounded
+                                    fontSize="small"
+                                    sx={{
+                                      transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                      transition: '0.2s',
+                                    }}
+                                  />
+                                </IconButton>
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  onClick={() => handleDeleteMeal(meal.id)}
+                                >
+                                  <DeleteOutlineRounded fontSize="small" />
+                                </IconButton>
+                              </Stack>
+                            </Box>
+                          </Stack>
+
+                          {meal.wittyFeedback && (
+                            <Paper
+                              variant="outlined"
+                              sx={{
+                                mt: 1.5,
+                                px: 1.5,
+                                py: 1,
+                                borderRadius: 2.5,
+                                bgcolor: 'rgba(11, 15, 25, 0.55)',
+                              }}
+                            >
+                              <Typography
+                                variant="caption"
+                                sx={{ fontStyle: 'italic', color: 'text.secondary' }}
+                              >
+                                🤖 &ldquo;{meal.wittyFeedback}&rdquo;
+                              </Typography>
+                            </Paper>
+                          )}
+
+                          <Collapse in={isExpanded}>
+                            <Divider sx={{ my: 1.5 }} />
+                            <Typography
+                              variant="caption"
+                              sx={{ fontWeight: 700, color: 'text.secondary', display: 'block', mb: 0.8 }}
+                            >
+                              Detected Plate Items:
+                            </Typography>
+                            <Stack spacing={0.6}>
+                              {meal.items.map((item, idx) => (
+                                <Stack
+                                  key={idx}
+                                  direction="row"
+                                  justifyContent="space-between"
+                                  sx={{
+                                    px: 1.2,
+                                    py: 0.6,
+                                    borderRadius: 2,
+                                    bgcolor: 'rgba(15, 23, 42, 0.5)',
+                                  }}
+                                >
+                                  <Typography variant="caption">
+                                    {item.name} ({item.portionEstimate})
+                                  </Typography>
+                                  <Typography variant="caption" color="primary.light" sx={{ fontWeight: 700 }}>
+                                    {item.calories} kcal
+                                  </Typography>
+                                </Stack>
+                              ))}
+                            </Stack>
+                          </Collapse>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </Stack>
               )}
-            </section>
-          </>
+            </Box>
+          </Stack>
         )}
 
         {activeTab === 'quests' && (
-          <div className="space-y-6">
-            {/* Streak Banner */}
-            <div className="bg-gradient-to-br from-orange-500/20 via-amber-500/10 to-slate-900 border border-orange-500/30 rounded-3xl p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-orange-300">
-                  Active Logging Streak
-                </p>
-                <h2 className="text-3xl font-black text-white mt-0.5">
-                  {userState.streakDays} {userState.streakDays === 1 ? 'Day' : 'Days'} 🔥
-                </h2>
-                <p className="text-xs text-slate-300 mt-1">
-                  Longest Streak: <strong className="text-white">{userState.longestStreak}d</strong>{' '}
-                  • Streak Freezes: <strong className="text-sky-300">{userState.streakFreezes}❄️</strong>
-                </p>
-              </div>
-              <div className="text-5xl">🔥</div>
-            </div>
+          <Stack spacing={3}>
+            {/* Streak Hero Banner */}
+            <Card
+              elevation={0}
+              sx={{
+                background:
+                  'linear-gradient(135deg, rgba(245, 158, 11, 0.22) 0%, rgba(19, 27, 46, 0.95) 100%)',
+                borderColor: alpha('#F59E0B', 0.4),
+              }}
+            >
+              <CardContent sx={{ p: 2.5 }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Box>
+                    <Typography
+                      variant="overline"
+                      sx={{ color: '#FCD34D', fontWeight: 800, letterSpacing: '0.08em' }}
+                    >
+                      Active Logging Streak
+                    </Typography>
+                    <Typography variant="h4" sx={{ mt: 0.2 }}>
+                      {userState.streakDays} {userState.streakDays === 1 ? 'Day' : 'Days'} 🔥
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                      Longest Streak: <strong>{userState.longestStreak}d</strong> • Freeze Shields:{' '}
+                      <strong>{userState.streakFreezes} ❄️</strong>
+                    </Typography>
+                  </Box>
+                  <Avatar
+                    sx={{
+                      width: 64,
+                      height: 64,
+                      bgcolor: alpha('#F59E0B', 0.2),
+                      fontSize: '2.2rem',
+                    }}
+                  >
+                    🔥
+                  </Avatar>
+                </Stack>
+              </CardContent>
+            </Card>
 
             {/* All Daily Quests */}
-            <section className="space-y-3">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <Target className="w-4 h-4 text-emerald-400" />
-                Today&apos;s Quests
-              </h3>
-              <div className="space-y-2.5">
+            <Box>
+              <Stack direction="row" spacing={0.8} alignItems="center" sx={{ mb: 1.2 }}>
+                <TrackChangesRounded color="primary" fontSize="small" />
+                <Typography
+                  variant="overline"
+                  sx={{ fontWeight: 800, letterSpacing: '0.08em', color: 'text.secondary' }}
+                >
+                  Today&apos;s Quests
+                </Typography>
+              </Stack>
+
+              <Stack spacing={1.5}>
                 {dailyQuests.map((q) => {
                   const isClaimed = claimedTodaySet.has(q.id);
                   const pct = Math.min(100, Math.round((q.progress / q.target) * 100));
                   return (
-                    <div
-                      key={q.id}
-                      className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2.5"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl">{q.icon}</span>
-                          <div>
-                            <h4 className="font-bold text-sm text-white">{q.title}</h4>
-                            <p className="text-xs text-slate-400">{q.description}</p>
-                          </div>
-                        </div>
-                        {isClaimed ? (
-                          <span className="text-xs font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-500/30 px-3 py-1 rounded-xl">
-                            Done ✓
-                          </span>
-                        ) : q.completed ? (
-                          <button
-                            onClick={() => handleClaimQuest(q.id, q.xpReward, q.title)}
-                            className="px-3.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs shadow"
-                          >
-                            Claim +{q.xpReward} XP
-                          </button>
-                        ) : (
-                          <span className="text-xs font-bold text-amber-300">
-                            +{q.xpReward} XP
-                          </span>
-                        )}
-                      </div>
-                      <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-emerald-400 transition-all"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
+                    <Card key={q.id} elevation={0}>
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Stack
+                          direction="row"
+                          justifyContent="space-between"
+                          alignItems="center"
+                          spacing={1.5}
+                          sx={{ mb: 1.2 }}
+                        >
+                          <Stack direction="row" spacing={1.5} alignItems="center">
+                            <Avatar sx={{ bgcolor: 'rgba(15, 23, 42, 0.8)', fontSize: '1.3rem' }}>
+                              {q.icon}
+                            </Avatar>
+                            <Box>
+                              <Typography variant="subtitle2">{q.title}</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {q.description}
+                              </Typography>
+                            </Box>
+                          </Stack>
+
+                          {isClaimed ? (
+                            <Chip label="Done ✓" color="success" size="small" />
+                          ) : q.completed ? (
+                            <Button
+                              variant="contained"
+                              color="secondary"
+                              size="small"
+                              onClick={() => handleClaimQuest(q.id, q.xpReward, q.title)}
+                            >
+                              Claim +{q.xpReward} XP
+                            </Button>
+                          ) : (
+                            <Chip
+                              label={`+${q.xpReward} XP`}
+                              size="small"
+                              color="secondary"
+                              variant="outlined"
+                            />
+                          )}
+                        </Stack>
+                        <LinearProgress variant="determinate" value={pct} />
+                      </CardContent>
+                    </Card>
                   );
                 })}
-              </div>
-            </section>
+              </Stack>
+            </Box>
 
-            {/* Achievement Badges Grid */}
-            <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <Trophy className="w-4 h-4 text-amber-400" />
+            {/* Achievement Badges */}
+            <Box>
+              <Stack direction="row" spacing={0.8} alignItems="center" sx={{ mb: 1.2 }}>
+                <EmojiEventsRounded color="secondary" fontSize="small" />
+                <Typography
+                  variant="overline"
+                  sx={{ fontWeight: 800, letterSpacing: '0.08em', color: 'text.secondary' }}
+                >
                   Achievement Badges ({userState.unlockedBadgeIds.length}/{ALL_BADGES.length})
-                </h3>
-              </div>
+                </Typography>
+              </Stack>
 
-              <div className="grid grid-cols-2 gap-3">
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, 1fr)',
+                  gap: 1.5,
+                }}
+              >
                 {ALL_BADGES.map((badge) => {
                   const unlocked = userState.unlockedBadgeIds.includes(badge.id);
                   return (
-                    <div
+                    <Card
                       key={badge.id}
-                      className={`p-3.5 rounded-2xl border transition ${
-                        unlocked
-                          ? 'bg-gradient-to-br from-emerald-950/60 to-slate-900 border-emerald-500/40 shadow-md'
-                          : 'bg-slate-900/40 border-slate-800/80 opacity-60'
-                      }`}
+                      elevation={0}
+                      sx={{
+                        opacity: unlocked ? 1 : 0.55,
+                        borderColor: unlocked ? alpha('#10B981', 0.45) : undefined,
+                        background: unlocked
+                          ? 'linear-gradient(145deg, rgba(16, 185, 129, 0.16) 0%, rgba(15, 23, 42, 0.95) 100%)'
+                          : undefined,
+                      }}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="text-2xl">{badge.icon}</span>
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            unlocked
-                              ? 'bg-emerald-500/20 text-emerald-300'
-                              : 'bg-slate-800 text-slate-400'
-                          }`}
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Stack direction="row" justifyContent="space-between" alignItems="center">
+                          <Typography sx={{ fontSize: '1.75rem' }}>{badge.icon}</Typography>
+                          <Chip
+                            label={`+${badge.xpReward} XP`}
+                            size="small"
+                            color={unlocked ? 'primary' : 'default'}
+                            sx={{ height: 20, fontSize: '0.65rem' }}
+                          />
+                        </Stack>
+                        <Typography variant="subtitle2" sx={{ mt: 1 }}>
+                          {badge.title}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ display: 'block', mt: 0.3, lineHeight: 1.3 }}
                         >
-                          +{badge.xpReward} XP
-                        </span>
-                      </div>
-                      <h4 className="font-bold text-xs text-white mt-2">{badge.title}</h4>
-                      <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">
-                        {badge.description}
-                      </p>
-                    </div>
+                          {badge.description}
+                        </Typography>
+                      </CardContent>
+                    </Card>
                   );
                 })}
-              </div>
-            </section>
-          </div>
+              </Box>
+            </Box>
+          </Stack>
         )}
 
         {activeTab === 'history' && (
-          <div className="space-y-4">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <History className="w-4 h-4 text-emerald-400" />
-              Meal Log History ({meals.length} total)
-            </h2>
+          <Stack spacing={2}>
+            <Stack direction="row" spacing={0.8} alignItems="center">
+              <HistoryRounded color="primary" fontSize="small" />
+              <Typography
+                variant="overline"
+                sx={{ fontWeight: 800, letterSpacing: '0.08em', color: 'text.secondary' }}
+              >
+                Meal Log History ({meals.length} Total)
+              </Typography>
+            </Stack>
 
             {meals.length === 0 ? (
-              <div className="bg-slate-900/50 border border-dashed border-slate-800 rounded-3xl p-8 text-center space-y-2">
-                <p className="text-sm text-slate-400">Your logged meals will appear here.</p>
-              </div>
+              <Card elevation={0} sx={{ textAlign: 'center', py: 5, px: 2 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Your logged meals will appear here.
+                </Typography>
+              </Card>
             ) : (
-              <div className="space-y-3">
-                {meals.map((meal) => (
-                  <div
-                    key={meal.id}
-                    className="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 flex items-center justify-between gap-3"
+              meals.map((meal) => (
+                <Card key={meal.id} elevation={0}>
+                  <CardContent
+                    sx={{
+                      p: 2,
+                      '&:last-child': { pb: 2 },
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 1.5,
+                    }}
                   >
-                    <div className="flex items-center gap-3">
-                      {meal.photoDataUrl ? (
-                        <img
-                          src={meal.photoDataUrl}
-                          alt={meal.mealName}
-                          className="w-12 h-12 rounded-xl object-cover border border-slate-700"
-                        />
-                      ) : (
-                        <div className="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center text-xl">
-                          {meal.emoji}
-                        </div>
-                      )}
-                      <div>
-                        <p className="text-[10px] text-slate-400 font-mono">
-                          {meal.dateKey} • {meal.mealType.toUpperCase()}
-                        </p>
-                        <h4 className="text-sm font-bold text-white">
-                          {meal.emoji} {meal.mealName}
-                        </h4>
-                        <p className="text-xs text-slate-400">
-                          Health Score: {meal.healthScore}/100 • P: {meal.macros.proteinGrams}g
-                        </p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-sm font-black text-emerald-400">
-                        {meal.totalCalories} kcal
-                      </span>
-                      <button
-                        onClick={() => handleDeleteMeal(meal.id)}
-                        className="block ml-auto text-slate-600 hover:text-rose-400 mt-1"
+                    <Stack direction="row" spacing={1.5} alignItems="center">
+                      <Avatar
+                        src={meal.photoDataUrl}
+                        variant="rounded"
+                        sx={{ width: 50, height: 50, borderRadius: 2.5, fontSize: '1.4rem' }}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                        {meal.emoji}
+                      </Avatar>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          {meal.dateKey} • {meal.mealType.toUpperCase()}
+                        </Typography>
+                        <Typography variant="subtitle2">
+                          {meal.emoji} {meal.mealName}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Health Score: {meal.healthScore}/100 • P: {meal.macros.proteinGrams}g
+                        </Typography>
+                      </Box>
+                    </Stack>
+
+                    <Box sx={{ textAlign: 'right' }}>
+                      <Typography variant="subtitle1" color="primary.light" sx={{ fontWeight: 800 }}>
+                        {meal.totalCalories} kcal
+                      </Typography>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => handleDeleteMeal(meal.id)}
+                      >
+                        <DeleteOutlineRounded fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  </CardContent>
+                </Card>
+              ))
             )}
-          </div>
+          </Stack>
         )}
 
         {activeTab === 'settings' && (
-          <form onSubmit={handleSaveSettings} className="space-y-5">
-            {settingsSavedBanner && (
-              <div className="p-3 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 text-xs font-bold flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                Settings saved to your device!
-              </div>
-            )}
-
-            {/* Gemini 4 Argon API Key Section */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <KeyRound className="w-4 h-4 text-emerald-400" />
-                  Gemini 4 Argon API Key
-                </h3>
-                {hasBuiltInApiKey() && (
-                  <span className="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-semibold">
-                    GitHub Secret Key Baked In
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-slate-400">
-                Used directly on your phone to call <code className="text-emerald-300">gemini-4-argon</code> via the official <code className="text-emerald-300">@google/genai</code> SDK.
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type={showApiKey ? 'text' : 'password'}
-                  value={apiKeyInput}
-                  onChange={(e) => setApiKeyInput(e.target.value)}
-                  placeholder={
-                    hasBuiltInApiKey()
-                      ? 'Using baked-in key (paste here to override)'
-                      : 'AIzaSy...'
-                  }
-                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowApiKey((s) => !s)}
-                  className="px-3 py-2 rounded-xl bg-slate-800 text-xs font-semibold text-slate-300"
+          <Box component="form" onSubmit={handleSaveSettings}>
+            <Stack spacing={2.5}>
+              {settingsSavedBanner && (
+                <Alert
+                  severity="success"
+                  onClose={() => setSettingsSavedBanner(false)}
+                  sx={{ borderRadius: 3 }}
                 >
-                  {showApiKey ? 'Hide' : 'Show'}
-                </button>
-              </div>
-            </div>
+                  Settings saved to your device!
+                </Alert>
+              )}
 
-            {/* Daily Calorie & Macro Targets */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Target className="w-4 h-4 text-emerald-400" />
-                Daily Calorie &amp; Macro Goals
-              </h3>
+              {/* Gemini AI Model Selection Card */}
+              <Card elevation={0}>
+                <CardContent sx={{ p: 2.5 }}>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                    <MemoryRounded color="primary" fontSize="small" />
+                    <Typography variant="subtitle1">Gemini Vision Model</Typography>
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                    Choose a <strong>100% Free Tier</strong> model (recommended) or the Paid Flagship model.
+                  </Typography>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">
-                    Daily Calories (kcal)
-                  </label>
-                  <input
-                    type="number"
-                    value={userState.goals.dailyCalories}
+                  <TextField
+                    select
+                    fullWidth
+                    size="small"
+                    label="Active Gemini Model"
+                    value={userState.selectedModel}
                     onChange={(e) =>
                       setUserState({
                         ...userState,
-                        goals: {
-                          ...userState.goals,
-                          dailyCalories: Number(e.target.value) || 2000,
-                        },
+                        selectedModel: e.target.value as GeminiModelId,
                       })
                     }
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                  >
+                    {AVAILABLE_GEMINI_MODELS.map((m) => (
+                      <MenuItem key={m.id} value={m.id}>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                            {m.name}
+                          </Typography>
+                          <Chip
+                            label={m.tierLabel}
+                            size="small"
+                            color={m.isFreeTier ? 'primary' : 'secondary'}
+                            sx={{ height: 18, fontSize: '0.6rem' }}
+                          />
+                        </Stack>
+                      </MenuItem>
+                    ))}
+                  </TextField>
+
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', mt: 1.2 }}
+                  >
+                    {activeModelMeta.description}
+                  </Typography>
+                </CardContent>
+              </Card>
+
+              {/* Gemini API Key Card */}
+              <Card elevation={0}>
+                <CardContent sx={{ p: 2.5 }}>
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    alignItems="center"
+                    sx={{ mb: 1 }}
+                  >
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <KeyRounded color="primary" fontSize="small" />
+                      <Typography variant="subtitle1">Google AI Studio API Key</Typography>
+                    </Stack>
+                    {hasBuiltInApiKey() && (
+                      <Chip
+                        label="GitHub Secret Active"
+                        color="primary"
+                        size="small"
+                        variant="outlined"
+                      />
+                    )}
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                    Get a free API key at <code>aistudio.google.com</code> and paste it below.
+                  </Typography>
+
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Gemini API Key"
+                    type={showApiKey ? 'text' : 'password'}
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    placeholder={
+                      hasBuiltInApiKey() ? 'Using baked-in key (paste to override)' : 'AIzaSy...'
+                    }
+                    slotProps={{
+                      input: {
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <IconButton
+                              size="small"
+                              onClick={() => setShowApiKey((s) => !s)}
+                              edge="end"
+                            >
+                              {showApiKey ? <VisibilityOffRounded /> : <VisibilityRounded />}
+                            </IconButton>
+                          </InputAdornment>
+                        ),
+                      },
+                    }}
                   />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Protein (g)</label>
-                  <input
-                    type="number"
-                    value={userState.goals.proteinGrams}
+                </CardContent>
+              </Card>
+
+              {/* Daily Calorie & Macro Targets */}
+              <Card elevation={0}>
+                <CardContent sx={{ p: 2.5 }}>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
+                    <TrackChangesRounded color="primary" fontSize="small" />
+                    <Typography variant="subtitle1">Daily Calorie &amp; Macro Targets</Typography>
+                  </Stack>
+
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(2, 1fr)',
+                      gap: 2,
+                    }}
+                  >
+                    <TextField
+                      label="Daily Calories (kcal)"
+                      type="number"
+                      size="small"
+                      value={userState.goals.dailyCalories}
+                      onChange={(e) =>
+                        setUserState({
+                          ...userState,
+                          goals: {
+                            ...userState.goals,
+                            dailyCalories: Number(e.target.value) || 2000,
+                          },
+                        })
+                      }
+                    />
+                    <TextField
+                      label="Protein (g)"
+                      type="number"
+                      size="small"
+                      value={userState.goals.proteinGrams}
+                      onChange={(e) =>
+                        setUserState({
+                          ...userState,
+                          goals: {
+                            ...userState.goals,
+                            proteinGrams: Number(e.target.value) || 120,
+                          },
+                        })
+                      }
+                    />
+                    <TextField
+                      label="Carbs (g)"
+                      type="number"
+                      size="small"
+                      value={userState.goals.carbsGrams}
+                      onChange={(e) =>
+                        setUserState({
+                          ...userState,
+                          goals: {
+                            ...userState.goals,
+                            carbsGrams: Number(e.target.value) || 200,
+                          },
+                        })
+                      }
+                    />
+                    <TextField
+                      label="Fat (g)"
+                      type="number"
+                      size="small"
+                      value={userState.goals.fatGrams}
+                      onChange={(e) =>
+                        setUserState({
+                          ...userState,
+                          goals: {
+                            ...userState.goals,
+                            fatGrams: Number(e.target.value) || 65,
+                          },
+                        })
+                      }
+                    />
+                  </Box>
+                </CardContent>
+              </Card>
+
+              {/* Personal Dietary Context */}
+              <Card elevation={0}>
+                <CardContent sx={{ p: 2.5 }}>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                    <AutoAwesomeRounded color="primary" fontSize="small" />
+                    <Typography variant="subtitle1">Personal Diet Context</Typography>
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                    Optional persistent context included with every food photo scan.
+                  </Typography>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={3}
+                    size="small"
+                    placeholder="E.g., Home-cooked Indian meals, 1 tsp ghee on rotis, medium bowl is 300ml..."
+                    value={userState.customPromptInstruction}
                     onChange={(e) =>
                       setUserState({
                         ...userState,
-                        goals: {
-                          ...userState.goals,
-                          proteinGrams: Number(e.target.value) || 120,
-                        },
+                        customPromptInstruction: e.target.value,
                       })
                     }
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
                   />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Carbs (g)</label>
-                  <input
-                    type="number"
-                    value={userState.goals.carbsGrams}
-                    onChange={(e) =>
-                      setUserState({
-                        ...userState,
-                        goals: {
-                          ...userState.goals,
-                          carbsGrams: Number(e.target.value) || 200,
-                        },
-                      })
-                    }
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Fat (g)</label>
-                  <input
-                    type="number"
-                    value={userState.goals.fatGrams}
-                    onChange={(e) =>
-                      setUserState({
-                        ...userState,
-                        goals: {
-                          ...userState.goals,
-                          fatGrams: Number(e.target.value) || 65,
-                        },
-                      })
-                    }
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
-                  />
-                </div>
-              </div>
-            </div>
+                </CardContent>
+              </Card>
 
-            {/* Custom Prompt Instructions for Gemini 4 Argon */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-emerald-400" />
-                Personal Diet Context for Gemini 4 Argon
-              </h3>
-              <p className="text-xs text-slate-400">
-                Optional hint sent with every photo (e.g., &ldquo;Home-cooked Indian meals, 1 tsp
-                ghee on rotis, my bowl holds 300ml&rdquo;).
-              </p>
-              <textarea
-                rows={3}
-                value={userState.customPromptInstruction}
-                onChange={(e) =>
-                  setUserState({
-                    ...userState,
-                    customPromptInstruction: e.target.value,
-                  })
-                }
-                placeholder="E.g. I usually cook with olive oil spray and eat high-protein portions..."
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-emerald-500"
-              />
-            </div>
+              <Button type="submit" variant="contained" color="primary" size="large" fullWidth>
+                Save Settings
+              </Button>
 
-            <button
-              type="submit"
-              className="w-full py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-sm shadow-lg"
-            >
-              Save Settings
-            </button>
-
-            {/* Backup & Restore */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-              <h3 className="text-sm font-bold text-white">Local Data Backup</h3>
-              <div className="flex gap-2.5">
-                <button
-                  type="button"
-                  onClick={handleExportData}
-                  className="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold flex items-center justify-center gap-1.5"
-                >
-                  <Download className="w-4 h-4 text-emerald-400" /> Export JSON
-                </button>
-                <button
-                  type="button"
-                  onClick={() => importJsonInputRef.current?.click()}
-                  className="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold flex items-center justify-center gap-1.5"
-                >
-                  <Upload className="w-4 h-4 text-sky-400" /> Import JSON
-                </button>
-              </div>
-            </div>
-          </form>
+              {/* Local Data Backup Card */}
+              <Card elevation={0}>
+                <CardContent sx={{ p: 2.5 }}>
+                  <Typography variant="subtitle2" sx={{ mb: 1.5 }}>
+                    Local Device Backup
+                  </Typography>
+                  <Stack direction="row" spacing={1.5}>
+                    <Button
+                      fullWidth
+                      variant="outlined"
+                      startIcon={<FileDownloadRounded />}
+                      onClick={handleExportData}
+                    >
+                      Export JSON
+                    </Button>
+                    <Button
+                      fullWidth
+                      variant="outlined"
+                      color="info"
+                      startIcon={<FileUploadRounded />}
+                      onClick={() => importJsonInputRef.current?.click()}
+                    >
+                      Import JSON
+                    </Button>
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Stack>
+          </Box>
         )}
-      </main>
+      </Container>
 
-      {/* AI Food Scanner Modal */}
-      {scannerOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex flex-col max-w-md mx-auto overflow-y-auto">
-          <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-800">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-emerald-400" />
-              <h2 className="font-extrabold text-sm text-white">
-                Gemini 4 Argon Food Scanner
-              </h2>
-            </div>
-            <button
-              onClick={() => setScannerOpen(false)}
-              className="p-1.5 rounded-xl bg-slate-800 text-slate-300"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+      {/* Material Fullscreen Dialog for AI Food Scanner */}
+      <Dialog
+        fullScreen
+        open={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        TransitionComponent={SlideUpTransition}
+        PaperProps={{
+          sx: {
+            bgcolor: 'background.default',
+            maxWidth: 480,
+            mx: 'auto',
+          },
+        }}
+      >
+        <AppBar
+          position="sticky"
+          elevation={0}
+          sx={{
+            bgcolor: alpha('#0B0F19', 0.9),
+            backdropFilter: 'blur(14px)',
+            borderBottom: '1px solid rgba(148, 163, 184, 0.12)',
+          }}
+        >
+          <Toolbar sx={{ justifyContent: 'space-between' }}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <AutoAwesomeRounded color="primary" />
+              <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                AI Food Scanner
+              </Typography>
+              <Chip
+                label={activeModelMeta.isFreeTier ? 'FREE TIER' : 'PAID'}
+                size="small"
+                color={activeModelMeta.isFreeTier ? 'primary' : 'secondary'}
+                sx={{ height: 20, fontSize: '0.62rem' }}
+              />
+            </Stack>
+            <IconButton edge="end" onClick={() => setScannerOpen(false)}>
+              <CloseRounded />
+            </IconButton>
+          </Toolbar>
+        </AppBar>
 
-          <div className="p-4 space-y-4 flex-1">
-            {/* Photo Preview */}
+        <DialogContent sx={{ p: 2.5 }}>
+          <Stack spacing={2.5}>
+            {/* Captured Photo Preview */}
             {capturedImage && (
-              <div className="relative rounded-2xl overflow-hidden border border-slate-800 bg-slate-900 max-h-56 flex items-center justify-center">
-                <img
+              <Box
+                sx={{
+                  position: 'relative',
+                  borderRadius: 4,
+                  overflow: 'hidden',
+                  maxHeight: 230,
+                  border: '1px solid rgba(148, 163, 184, 0.2)',
+                }}
+              >
+                <Box
+                  component="img"
                   src={capturedImage.dataUrl}
                   alt="Captured meal"
-                  className="w-full max-h-56 object-cover"
+                  sx={{ width: '100%', maxHeight: 230, objectFit: 'cover', display: 'block' }}
                 />
-                <button
+                <Button
+                  size="small"
+                  variant="contained"
+                  startIcon={<PhotoCameraRounded />}
                   onClick={() => handleStartCapture('camera')}
-                  className="absolute bottom-2.5 right-2.5 bg-slate-950/80 backdrop-blur px-3 py-1.5 rounded-xl text-xs font-bold text-white border border-white/15 flex items-center gap-1.5"
+                  sx={{
+                    position: 'absolute',
+                    bottom: 12,
+                    right: 12,
+                    bgcolor: 'rgba(11, 15, 25, 0.85)',
+                    color: '#fff',
+                    backdropFilter: 'blur(8px)',
+                  }}
                 >
-                  <CameraIcon className="w-3.5 h-3.5 text-emerald-400" /> Retake
-                </button>
-              </div>
+                  Retake
+                </Button>
+              </Box>
             )}
 
-            {/* Meal Type & Optional Hint */}
-            <div className="grid grid-cols-4 gap-1.5 bg-slate-900 p-1 rounded-2xl border border-slate-800">
-              {(['breakfast', 'lunch', 'dinner', 'snack'] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setMealType(t)}
-                  className={`py-2 rounded-xl text-xs font-bold capitalize transition ${
-                    mealType === t
-                      ? 'bg-emerald-500 text-slate-950 shadow'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+            {/* Meal Type ToggleButtonGroup */}
+            <ToggleButtonGroup
+              exclusive
+              fullWidth
+              size="small"
+              color="primary"
+              value={mealType}
+              onChange={(_, val) => val && setMealType(val)}
+            >
+              <ToggleButton value="breakfast">Breakfast</ToggleButton>
+              <ToggleButton value="lunch">Lunch</ToggleButton>
+              <ToggleButton value="dinner">Dinner</ToggleButton>
+              <ToggleButton value="snack">Snack</ToggleButton>
+            </ToggleButtonGroup>
 
             {!analysisResult && (
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Optional Note for Gemini 4 Argon
-                  </label>
-                  <input
-                    type="text"
-                    value={userNote}
-                    onChange={(e) => setUserNote(e.target.value)}
-                    placeholder="e.g., 200g chicken breast, cooked with 1 tbsp butter..."
-                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
+              <Stack spacing={2}>
+                <TextField
+                  select
+                  fullWidth
+                  size="small"
+                  label="AI Model"
+                  value={userState.selectedModel}
+                  onChange={(e) =>
+                    setUserState({
+                      ...userState,
+                      selectedModel: e.target.value as GeminiModelId,
+                    })
+                  }
+                >
+                  {AVAILABLE_GEMINI_MODELS.map((m) => (
+                    <MenuItem key={m.id} value={m.id}>
+                      {m.name} ({m.tierLabel})
+                    </MenuItem>
+                  ))}
+                </TextField>
+
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Optional Note About This Meal"
+                  placeholder="e.g., 200g chicken breast, cooked with 1 tbsp butter..."
+                  value={userNote}
+                  onChange={(e) => setUserNote(e.target.value)}
+                />
 
                 {analysisError && (
-                  <div className="p-3.5 rounded-2xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200">
+                  <Alert severity="error" sx={{ borderRadius: 3 }}>
                     {analysisError}
-                  </div>
+                  </Alert>
                 )}
 
-                <button
-                  onClick={handleRunGeminiAnalysis}
+                <Button
+                  fullWidth
+                  size="large"
+                  variant="contained"
+                  color="primary"
                   disabled={isAnalyzing}
-                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 disabled:opacity-50 text-slate-950 font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
+                  startIcon={
+                    isAnalyzing ? (
+                      <CircularProgress size={20} color="inherit" />
+                    ) : (
+                      <AutoAwesomeRounded />
+                    )
+                  }
+                  onClick={handleRunGeminiAnalysis}
+                  sx={{ py: 1.6 }}
                 >
-                  {isAnalyzing ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                      <span>Analyzing with Gemini 4 Argon...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-4 h-4" />
-                      <span>Calculate Calories with Gemini 4 Argon</span>
-                    </>
-                  )}
-                </button>
-              </div>
+                  {isAnalyzing
+                    ? `Analyzing with ${activeModelMeta.name}...`
+                    : `Calculate Calories (${activeModelMeta.name})`}
+                </Button>
+              </Stack>
             )}
 
-            {/* Analysis Results & Interactive Portion/Item Toggles */}
+            {/* Interactive Analysis Results */}
             {analysisResult && adjustedAnalysis && (
-              <div className="space-y-4 animate-fadeIn">
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">
-                        Health Score: {analysisResult.healthScore}/100
-                      </span>
-                      <h3 className="text-lg font-black text-white mt-1">
-                        {analysisResult.emoji} {analysisResult.mealName}
-                      </h3>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-2xl font-black text-emerald-400">
-                        {adjustedAnalysis.totalCalories}
-                      </span>
-                      <span className="block text-[10px] uppercase text-slate-400">kcal</span>
-                    </div>
-                  </div>
+              <Stack spacing={2.5}>
+                <Card elevation={0}>
+                  <CardContent sx={{ p: 2.5 }}>
+                    <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+                      <Box>
+                        <Chip
+                          label={`Health Score: ${analysisResult.healthScore}/100`}
+                          color="primary"
+                          size="small"
+                          sx={{ mb: 0.8 }}
+                        />
+                        <Typography variant="h6">
+                          {analysisResult.emoji} {analysisResult.mealName}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ textAlign: 'right' }}>
+                        <Typography variant="h4" color="primary.light" sx={{ fontWeight: 900 }}>
+                          {adjustedAnalysis.totalCalories}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          KCAL
+                        </Typography>
+                      </Box>
+                    </Stack>
 
-                  {/* Macro Pills */}
-                  <div className="grid grid-cols-4 gap-2 pt-2 border-t border-slate-800 text-center">
-                    <div className="bg-slate-950/80 p-2 rounded-xl">
-                      <span className="block text-[10px] text-rose-300 font-bold">Protein</span>
-                      <span className="text-xs font-extrabold text-white">
-                        {adjustedAnalysis.macros.proteinGrams}g
-                      </span>
-                    </div>
-                    <div className="bg-slate-950/80 p-2 rounded-xl">
-                      <span className="block text-[10px] text-amber-300 font-bold">Carbs</span>
-                      <span className="text-xs font-extrabold text-white">
-                        {adjustedAnalysis.macros.carbsGrams}g
-                      </span>
-                    </div>
-                    <div className="bg-slate-950/80 p-2 rounded-xl">
-                      <span className="block text-[10px] text-sky-300 font-bold">Fat</span>
-                      <span className="text-xs font-extrabold text-white">
-                        {adjustedAnalysis.macros.fatGrams}g
-                      </span>
-                    </div>
-                    <div className="bg-slate-950/80 p-2 rounded-xl">
-                      <span className="block text-[10px] text-emerald-300 font-bold">Fiber</span>
-                      <span className="text-xs font-extrabold text-white">
-                        {adjustedAnalysis.macros.fiberGrams}g
-                      </span>
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-slate-300 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800 italic">
-                    🤖 &ldquo;{analysisResult.wittyFeedback}&rdquo;
-                  </p>
-                </div>
-
-                {/* Portion Size Multiplier */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-400">
-                    Portion Multiplier
-                  </label>
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {[0.5, 0.75, 1, 1.25, 1.5].map((mult) => (
-                      <button
-                        key={mult}
-                        type="button"
-                        onClick={() => setPortionMultiplier(mult)}
-                        className={`py-1.5 rounded-xl text-xs font-bold border transition ${
-                          portionMultiplier === mult
-                            ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
-                            : 'bg-slate-900 border-slate-800 text-slate-400'
-                        }`}
+                    {/* 4 Macro Tiles */}
+                    <Box
+                      sx={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(4, 1fr)',
+                        gap: 1,
+                        mt: 2,
+                      }}
+                    >
+                      <Paper
+                        sx={{
+                          p: 1,
+                          textAlign: 'center',
+                          borderRadius: 2.5,
+                          bgcolor: 'rgba(11, 15, 25, 0.7)',
+                        }}
                       >
-                        {mult}x
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                        <Typography variant="caption" sx={{ color: '#FDA4AF', fontWeight: 700, display: 'block' }}>
+                          Protein
+                        </Typography>
+                        <Typography variant="subtitle2">
+                          {adjustedAnalysis.macros.proteinGrams}g
+                        </Typography>
+                      </Paper>
+                      <Paper
+                        sx={{
+                          p: 1,
+                          textAlign: 'center',
+                          borderRadius: 2.5,
+                          bgcolor: 'rgba(11, 15, 25, 0.7)',
+                        }}
+                      >
+                        <Typography variant="caption" sx={{ color: '#FDE68A', fontWeight: 700, display: 'block' }}>
+                          Carbs
+                        </Typography>
+                        <Typography variant="subtitle2">
+                          {adjustedAnalysis.macros.carbsGrams}g
+                        </Typography>
+                      </Paper>
+                      <Paper
+                        sx={{
+                          p: 1,
+                          textAlign: 'center',
+                          borderRadius: 2.5,
+                          bgcolor: 'rgba(11, 15, 25, 0.7)',
+                        }}
+                      >
+                        <Typography variant="caption" sx={{ color: '#BAE6FD', fontWeight: 700, display: 'block' }}>
+                          Fat
+                        </Typography>
+                        <Typography variant="subtitle2">
+                          {adjustedAnalysis.macros.fatGrams}g
+                        </Typography>
+                      </Paper>
+                      <Paper
+                        sx={{
+                          p: 1,
+                          textAlign: 'center',
+                          borderRadius: 2.5,
+                          bgcolor: 'rgba(11, 15, 25, 0.7)',
+                        }}
+                      >
+                        <Stack direction="row" justifyContent="center" alignItems="center" spacing={0.3}>
+                          <GrassRounded sx={{ fontSize: 12, color: '#6EE7B7' }} />
+                          <Typography variant="caption" sx={{ color: '#6EE7B7', fontWeight: 700 }}>
+                            Fiber
+                          </Typography>
+                        </Stack>
+                        <Typography variant="subtitle2">
+                          {adjustedAnalysis.macros.fiberGrams}g
+                        </Typography>
+                      </Paper>
+                    </Box>
 
-                {/* Detected Food Items Breakdown */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-400">
-                    Detected Items (tap to toggle)
-                  </label>
-                  <div className="space-y-1.5">
-                    {analysisResult.items.map((item, idx) => {
-                      const included = item.included !== false;
-                      return (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => handleToggleDetectedItem(idx)}
-                          className={`w-full p-2.5 rounded-xl border text-left flex items-center justify-between transition ${
-                            included
-                              ? 'bg-slate-900 border-slate-800 text-white'
-                              : 'bg-slate-950 border-slate-900 text-slate-600 line-through'
-                          }`}
-                        >
-                          <div>
-                            <p className="text-xs font-bold">{item.name}</p>
-                            <p className="text-[11px] text-slate-400">
-                              {item.portionEstimate} • P: {item.proteinGrams}g C: {item.carbsGrams}g
-                              F: {item.fatGrams}g
-                            </p>
-                          </div>
-                          <span className="text-xs font-extrabold text-emerald-400">
-                            {Math.round(item.calories * portionMultiplier)} kcal
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                    <Alert
+                      icon={<AutoAwesomeRounded fontSize="small" />}
+                      severity="success"
+                      variant="outlined"
+                      sx={{ mt: 2, borderRadius: 2.5 }}
+                    >
+                      &ldquo;{analysisResult.wittyFeedback}&rdquo;
+                    </Alert>
+                  </CardContent>
+                </Card>
 
-                <div className="flex gap-2.5 pt-2">
-                  <button
-                    type="button"
+                {/* Portion Size Material Slider */}
+                <Card elevation={0}>
+                  <CardContent sx={{ px: 2.5, py: 2 }}>
+                    <Stack direction="row" justifyContent="space-between" alignItems="center">
+                      <Typography variant="subtitle2">Portion Multiplier</Typography>
+                      <Chip label={`${portionMultiplier}x`} color="primary" size="small" />
+                    </Stack>
+                    <Slider
+                      value={portionMultiplier}
+                      min={0.5}
+                      max={2.0}
+                      step={0.25}
+                      marks={[
+                        { value: 0.5, label: '0.5x' },
+                        { value: 1, label: '1x' },
+                        { value: 1.5, label: '1.5x' },
+                        { value: 2, label: '2x' },
+                      ]}
+                      onChange={(_, val) => setPortionMultiplier(val as number)}
+                      sx={{ mt: 1 }}
+                    />
+                  </CardContent>
+                </Card>
+
+                {/* Itemized Plate Checklist */}
+                <Card elevation={0}>
+                  <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ px: 1.5, pt: 0.5, display: 'block', fontWeight: 700 }}
+                    >
+                      DETECTED ITEMS (TAP TO INCLUDE / EXCLUDE)
+                    </Typography>
+                    <List dense disablePadding>
+                      {analysisResult.items.map((item, idx) => {
+                        const included = item.included !== false;
+                        return (
+                          <ListItem
+                            key={idx}
+                            disablePadding
+                            secondaryAction={
+                              <Typography
+                                variant="caption"
+                                color={included ? 'primary.light' : 'text.disabled'}
+                                sx={{ fontWeight: 800 }}
+                              >
+                                {Math.round(item.calories * portionMultiplier)} kcal
+                              </Typography>
+                            }
+                          >
+                            <ListItemButton
+                              onClick={() => handleToggleDetectedItem(idx)}
+                              sx={{ borderRadius: 2 }}
+                            >
+                              <ListItemIcon sx={{ minWidth: 34 }}>
+                                <Checkbox
+                                  edge="start"
+                                  checked={included}
+                                  tabIndex={-1}
+                                  disableRipple
+                                  size="small"
+                                />
+                              </ListItemIcon>
+                              <ListItemText
+                                primary={item.name}
+                                secondary={`${item.portionEstimate} • P:${item.proteinGrams}g C:${item.carbsGrams}g F:${item.fatGrams}g`}
+                                sx={{
+                                  textDecoration: included ? 'none' : 'line-through',
+                                  opacity: included ? 1 : 0.45,
+                                }}
+                              />
+                            </ListItemButton>
+                          </ListItem>
+                        );
+                      })}
+                    </List>
+                  </CardContent>
+                </Card>
+
+                <Stack direction="row" spacing={1.5}>
+                  <Button
+                    variant="outlined"
+                    color="inherit"
                     onClick={() => setAnalysisResult(null)}
-                    className="px-4 py-3.5 rounded-2xl bg-slate-800 text-xs font-bold text-slate-300"
+                    sx={{ px: 2.5 }}
                   >
-                    Re-Analyze
-                  </button>
-                  <button
-                    type="button"
+                    Re-Scan
+                  </Button>
+                  <Button
+                    fullWidth
+                    size="large"
+                    variant="contained"
+                    color="primary"
                     onClick={handleSaveScannedMeal}
-                    className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-extrabold text-sm shadow-lg flex items-center justify-center gap-2"
                   >
-                    <span>
-                      Log Meal (+{calculateMealXp(analysisResult.healthScore).totalXp} XP)
-                    </span>
-                  </button>
-                </div>
-              </div>
+                    Log Meal (+{calculateMealXp(analysisResult.healthScore).totalXp} XP)
+                  </Button>
+                </Stack>
+              </Stack>
             )}
-          </div>
-        </div>
-      )}
+          </Stack>
+        </DialogContent>
+      </Dialog>
 
-      {/* Bottom Mobile Navigation Bar */}
-      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-slate-950/95 backdrop-blur-md border-t border-slate-800/90 px-4 py-2 flex items-center justify-around z-30">
-        <button
-          onClick={() => setActiveTab('today')}
-          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition ${
-            activeTab === 'today' ? 'text-emerald-400' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Utensils className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Today</span>
-        </button>
+      {/* Material BottomNavigation + Floating Camera FAB */}
+      <Paper
+        elevation={12}
+        sx={{
+          position: 'fixed',
+          bottom: 0,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: '100%',
+          maxWidth: 480,
+          zIndex: 30,
+          borderTop: '1px solid rgba(148, 163, 184, 0.14)',
+          bgcolor: alpha('#0B0F19', 0.94),
+          backdropFilter: 'blur(16px)',
+        }}
+      >
+        <Box sx={{ position: 'relative' }}>
+          <Fab
+            color="primary"
+            aria-label="Snap Meal Photo"
+            onClick={() => handleStartCapture('camera')}
+            sx={{
+              position: 'absolute',
+              top: -26,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 2,
+              boxShadow: '0 8px 24px rgba(16, 185, 129, 0.5)',
+            }}
+          >
+            <AddAPhotoRounded />
+          </Fab>
 
-        <button
-          onClick={() => setActiveTab('quests')}
-          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition ${
-            activeTab === 'quests' ? 'text-emerald-400' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Award className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Quests</span>
-        </button>
-
-        {/* Floating Center Camera Action Button */}
-        <button
-          onClick={() => handleStartCapture('camera')}
-          className="-mt-7 w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 flex items-center justify-center shadow-xl shadow-emerald-500/30 border-4 border-slate-950 active:scale-95 transition"
-          title="Snap Meal Photo"
-        >
-          <Plus className="w-7 h-7 stroke-[2.5]" />
-        </button>
-
-        <button
-          onClick={() => setActiveTab('history')}
-          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition ${
-            activeTab === 'history' ? 'text-emerald-400' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <History className="w-5 h-5" />
-          <span className="text-[10px] font-bold">History</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition ${
-            activeTab === 'settings' ? 'text-emerald-400' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <SettingsIcon className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Settings</span>
-        </button>
-      </nav>
-    </div>
+          <BottomNavigation
+            showLabels
+            value={activeTab}
+            onChange={(_, newValue) => {
+              if (newValue) setActiveTab(newValue);
+            }}
+            sx={{ bgcolor: 'transparent', height: 68 }}
+          >
+            <BottomNavigationAction
+              label="Today"
+              value="today"
+              icon={<RestaurantMenuRounded />}
+            />
+            <BottomNavigationAction
+              label="Quests"
+              value="quests"
+              icon={<EmojiEventsRounded />}
+              sx={{ mr: 4 }}
+            />
+            <BottomNavigationAction
+              label="History"
+              value="history"
+              icon={<HistoryRounded />}
+              sx={{ ml: 4 }}
+            />
+            <BottomNavigationAction
+              label="Settings"
+              value="settings"
+              icon={<SettingsRounded />}
+            />
+          </BottomNavigation>
+        </Box>
+      </Paper>
+    </Box>
   );
 }
+
 export default App;

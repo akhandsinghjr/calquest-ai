@@ -1,7 +1,40 @@
 import { GoogleGenAI } from '@google/genai';
-import type { GeminiMealAnalysis } from '../types';
+import type { GeminiMealAnalysis, GeminiModelId } from '../types';
 
 const STORAGE_KEY_API = 'calquest_gemini_api_key';
+
+export const AVAILABLE_GEMINI_MODELS: {
+  id: GeminiModelId;
+  name: string;
+  tierLabel: string;
+  isFreeTier: boolean;
+  description: string;
+}[] = [
+  {
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    tierLabel: 'FREE TIER • Best Balance',
+    isFreeTier: true,
+    description:
+      'Most intelligent Flash model with multimodal thinking. 100% free in Google AI Studio (~96% as accurate as Argon, 2.5x faster).',
+  },
+  {
+    id: 'gemini-3.5-flash-lite',
+    name: 'Gemini 3.5 Flash-Lite',
+    tierLabel: 'FREE TIER • Ultra Fast',
+    isFreeTier: true,
+    description:
+      'Fastest free-tier model with the highest daily request quota. Great for quick everyday snacks and standard meals.',
+  },
+  {
+    id: 'gemini-4-argon',
+    name: 'Gemini 4 Argon',
+    tierLabel: 'PAID TIER • Flagship',
+    isFreeTier: false,
+    description:
+      'Flagship reasoning model ($2/1M input, $10/1M output). Requires a paid billing account in Google AI Studio.',
+  },
+];
 
 export function getStoredApiKey(): string {
   const localKey = localStorage.getItem(STORAGE_KEY_API)?.trim();
@@ -98,21 +131,23 @@ const MEAL_ANALYSIS_SCHEMA = {
 export async function analyzeFoodPhotoWithGemini(params: {
   base64Data: string;
   mimeType: string;
+  model?: GeminiModelId;
   userNote?: string;
   customInstruction?: string;
 }): Promise<GeminiMealAnalysis> {
   const apiKey = getStoredApiKey();
   if (!apiKey) {
     throw new Error(
-      'Missing Gemini API Key. Please add your key in the Settings tab (or set GEMINI_API_KEY in GitHub Secrets).'
+      'Missing Gemini API Key. Please add your free Google AI Studio key in the Settings tab.'
     );
   }
 
+  const selectedModel: GeminiModelId = params.model || 'gemini-3.8-flash';
   const client = new GoogleGenAI({ apiKey });
 
   const promptParts = [
     'Analyze this food photo and calculate its calories and macronutrients accurately.',
-    'Estimate realistic portion sizes using visual cues such as plate size, utensils, or packaging.',
+    'Estimate realistic portion sizes using visual cues such as plate size, utensils, bowl depth, or packaging.',
     'Include hidden calories such as cooking oils, sauces, dressings, or butter where visually or culinarily typical.',
   ];
 
@@ -125,9 +160,9 @@ export async function analyzeFoodPhotoWithGemini(params: {
   }
 
   const interaction = await client.interactions.create({
-    model: 'gemini-4-argon',
+    model: selectedModel,
     system_instruction:
-      'You are CalQuest AI, an expert visual nutritionist and gamified fitness coach powered by Gemini 4 Argon. Break down every meal photo into accurate item-level calorie and macronutrient estimates and return strictly valid JSON matching the requested schema.',
+      'You are CalQuest AI, an expert visual nutritionist and gamified fitness coach. Break down every meal photo into accurate item-level calorie and macronutrient estimates and return strictly valid JSON matching the requested schema.',
     input: [
       {
         type: 'text',
@@ -148,7 +183,7 @@ export async function analyzeFoodPhotoWithGemini(params: {
 
   const rawText = interaction.output_text;
   if (!rawText) {
-    throw new Error('Gemini 4 Argon returned an empty response. Please try snapping the photo again.');
+    throw new Error(`${selectedModel} returned an empty response. Please try snapping the photo again.`);
   }
 
   const parsed = JSON.parse(rawText) as GeminiMealAnalysis;
