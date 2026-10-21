@@ -37,7 +37,7 @@ jobs:
           java-version: '21'
 
       - name: Install NPM dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Build Web App (Vite + TypeScript)
         env:
