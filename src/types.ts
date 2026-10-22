@@ -37,6 +37,14 @@ export interface MealLog extends GeminiMealAnalysis {
   userNote?: string;
 }
 
+export interface DailyJournalEntry {
+  dateKey: string; // YYYY-MM-DD
+  weightKg?: number;
+  note?: string;
+  energyLevel?: 'low' | 'steady' | 'peak';
+  updatedAt: string;
+}
+
 export interface UserGoals {
   dailyCalories: number;
   proteinGrams: number;
@@ -97,6 +105,8 @@ export interface DailyQuest {
 }
 
 export interface UserState {
+  userName?: string;
+  onboardingCompleted?: boolean;
   xp: number;
   streakDays: number;
   longestStreak: number;
@@ -104,6 +114,7 @@ export interface UserState {
   streakFreezes: number;
   unlockedBadgeIds: string[];
   claimedQuestIdsByDate: Record<string, string[]>;
+  dailyJournal: Record<string, DailyJournalEntry>;
   goals: UserGoals;
   biometrics: BiometricsProfile;
   customPromptInstruction: string;
