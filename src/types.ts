@@ -35,11 +35,24 @@ export interface MealLog extends GeminiMealAnalysis {
   xpEarned: number;
   portionMultiplier: number;
   userNote?: string;
+  isFavorite?: boolean;
+}
+
+export interface SavedMealTemplate {
+  id: string;
+  mealName: string;
+  mealType: 'breakfast' | 'lunch' | 'dinner' | 'snack';
+  totalCalories: number;
+  macros: MacroBreakdown;
+  healthScore: number;
+  useCount: number;
+  lastUsedAt: string;
 }
 
 export interface DailyJournalEntry {
   dateKey: string; // YYYY-MM-DD
   weightKg?: number;
+  waterMl?: number;
   note?: string;
   energyLevel?: 'low' | 'steady' | 'peak';
   updatedAt: string;
@@ -51,6 +64,7 @@ export interface UserGoals {
   carbsGrams: number;
   fatGrams: number;
   fiberGrams: number;
+  waterMl: number;
 }
 
 export interface BiometricsProfile {
@@ -80,6 +94,7 @@ export interface MetabolicCalculationResult {
   dailyCalorieDelta: number;
   targetDailyCalories: number;
   weeklyRateKg: number;
+  recommendedWaterMl: number;
   isSafetyClamped: boolean;
   recommendedMacros: MacroBreakdown;
 }
@@ -116,6 +131,7 @@ export interface UserState {
   unlockedBadgeIds: string[];
   claimedQuestIdsByDate: Record<string, string[]>;
   dailyJournal: Record<string, DailyJournalEntry>;
+  savedTemplates: SavedMealTemplate[];
   goals: UserGoals;
   biometrics: BiometricsProfile;
   customPromptInstruction: string;

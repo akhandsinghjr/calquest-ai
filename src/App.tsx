@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Award,
+  Bookmark,
   BookOpen,
   Calculator,
   Calendar,
@@ -20,6 +21,7 @@ import {
   Compass,
   Crown,
   Download,
+  Droplets,
   Dumbbell,
   Eye,
   EyeOff,
@@ -31,12 +33,12 @@ import {
   Loader2,
   Medal,
   Moon,
+  Pencil,
   Plus,
   RefreshCw,
-  Scale,
+  Repeat,
   Settings,
   Shield,
-  Sliders,
   Sparkles,
   Sprout,
   Sun,
@@ -58,9 +60,15 @@ import type {
   DetectedFoodItem,
   GeminiMealAnalysis,
   MealLog,
+  SavedMealTemplate,
   UserGoals,
   UserState,
 } from './types';
+import {
+  EditMealModal,
+  FrequentMealsModal,
+  HydrationTrackerCard,
+} from './components/ActionModals';
 import {
   CalQuestLogoMark,
   EmptyPlateVector,
@@ -114,6 +122,58 @@ const M3_SOFT_SPRING = {
   stiffness: 240,
   damping: 26,
 };
+
+/**
+ * Controlled numeric input that preserves raw string keystrokes while typing/backspacing
+ * so clearing a box never snaps back mid-keystroke.
+ */
+function NumericField({
+  value,
+  onChangeNumber,
+  placeholder,
+  className,
+  step = 'any',
+}: {
+  value: number | undefined;
+  onChangeNumber: (val: number | undefined) => void;
+  placeholder?: string;
+  className?: string;
+  step?: string;
+}) {
+  const [raw, setRaw] = useState<string>(() =>
+    value !== undefined && !Number.isNaN(value) ? String(value) : ''
+  );
+
+  useEffect(() => {
+    const parsedRaw = raw.trim() === '' ? undefined : Number(raw);
+    if (value !== parsedRaw) {
+      setRaw(value !== undefined && !Number.isNaN(value) ? String(value) : '');
+    }
+  }, [value]);
+
+  return (
+    <input
+      type="number"
+      inputMode="decimal"
+      step={step}
+      value={raw}
+      placeholder={placeholder}
+      onChange={(e) => {
+        const next = e.target.value;
+        setRaw(next);
+        if (next.trim() === '') {
+          onChangeNumber(undefined);
+        } else {
+          const num = Number(next);
+          if (!Number.isNaN(num)) {
+            onChangeNumber(num);
+          }
+        }
+      }}
+      className={className}
+    />
+  );
+}
 
 function RenderVectorIcon({
   name,
@@ -221,7 +281,7 @@ export default function App() {
   const [meals, setMeals] = useState<MealLog[]>(() => loadMeals());
   const [userState, setUserState] = useState<UserState>(() => loadUserState());
 
-  // Onboarding wizard state: guaranteed to launch if onboardingCompletedV2 is not yet true
+  // Onboarding wizard state
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
     const initial = loadUserState();
     return !initial.onboardingCompletedV2;
@@ -236,6 +296,10 @@ export default function App() {
   const [journalNoteDraft, setJournalNoteDraft] = useState<string>('');
   const [journalEnergyDraft, setJournalEnergyDraft] = useState<'low' | 'steady' | 'peak'>('steady');
   const [journalSavedToast, setJournalSavedToast] = useState(false);
+
+  // Edit Meal & Frequent Meals modal states
+  const [editingMeal, setEditingMeal] = useState<MealLog | null>(null);
+  const [quickAddModalDate, setQuickAddModalDate] = useState<string | null>(null);
 
   // Settings & API state
   const [apiKeyInput, setApiKeyInput] = useState<string>(() => getStoredApiKey());
@@ -287,7 +351,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Hydrate from IndexedDB on initial mount so large multi-day histories stay intact
+  // Hydrate from IndexedDB on initial mount
   useEffect(() => {
     let mounted = true;
     hydrateFromIndexedDb().then(({ state, meals: idbMeals }) => {
@@ -334,6 +398,47 @@ export default function App() {
     [meals, selectedJournalDate]
   );
 
+  /**
+   * Deduplicated Frequent & Saved Staple Meals list for 1-tap re-logging
+   */
+  const frequentMealsList = useMemo<SavedMealTemplate[]>(() => {
+    const map = new Map<string, SavedMealTemplate>();
+
+    // First add explicit saved templates
+    for (const tpl of userState.savedTemplates || []) {
+      const key = tpl.mealName.trim().toLowerCase();
+      map.set(key, { ...tpl });
+    }
+
+    // Then aggregate from historical meal logs
+    for (const m of meals) {
+      const key = m.mealName.trim().toLowerCase();
+      const existing = map.get(key);
+      if (existing) {
+        existing.useCount += 1;
+        if (m.timestamp > existing.lastUsedAt) {
+          existing.lastUsedAt = m.timestamp;
+        }
+      } else {
+        map.set(key, {
+          id: `hist_${m.id}`,
+          mealName: m.mealName,
+          mealType: m.mealType,
+          totalCalories: m.totalCalories,
+          macros: { ...m.macros },
+          healthScore: m.healthScore || 80,
+          useCount: 1,
+          lastUsedAt: m.timestamp,
+        });
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => {
+      if (b.useCount !== a.useCount) return b.useCount - a.useCount;
+      return b.lastUsedAt.localeCompare(a.lastUsedAt);
+    });
+  }, [meals, userState.savedTemplates]);
+
   const todayTotals = useMemo(() => {
     return todayMeals.reduce(
       (acc, m) => ({
@@ -360,6 +465,9 @@ export default function App() {
     );
   }, [selectedDateMeals]);
 
+  const todayWaterMl = userState.dailyJournal?.[todayKey]?.waterMl || 0;
+  const selectedDateWaterMl = userState.dailyJournal?.[selectedJournalDate]?.waterMl || 0;
+
   const past14Days = useMemo(() => getPastDateKeys(14), [todayKey]);
   const past7Days = useMemo(() => past14Days.slice(-7), [past14Days]);
 
@@ -369,12 +477,14 @@ export default function App() {
       const calories = dayMeals.reduce((s, m) => s + m.totalCalories, 0);
       const protein = dayMeals.reduce((s, m) => s + m.macros.proteinGrams, 0);
       const weight = userState.dailyJournal?.[d.dateKey]?.weightKg;
+      const waterMl = userState.dailyJournal?.[d.dateKey]?.waterMl || 0;
       return {
         ...d,
         calories,
         protein,
         mealCount: dayMeals.length,
         weight,
+        waterMl,
       };
     });
 
@@ -433,6 +543,117 @@ export default function App() {
 
   const hasApiKeyConfigured = Boolean(getStoredApiKey());
 
+  function updateWaterForDate(dateKey: string, nextWaterMl: number) {
+    const clamped = Math.max(0, Math.round(nextWaterMl));
+    setUserState((prev) => {
+      const existing = prev.dailyJournal?.[dateKey] || {
+        dateKey,
+        updatedAt: new Date().toISOString(),
+      };
+      return {
+        ...prev,
+        dailyJournal: {
+          ...(prev.dailyJournal || {}),
+          [dateKey]: {
+            ...existing,
+            waterMl: clamped,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      };
+    });
+  }
+
+  function handleSaveMealEdit(updatedMeal: MealLog) {
+    setMeals((prev) => prev.map((m) => (m.id === updatedMeal.id ? updatedMeal : m)));
+    setEditingMeal(null);
+  }
+
+  function handleSaveMealAsTemplate(meal: MealLog) {
+    const newTpl: SavedMealTemplate = {
+      id: `tpl_${Date.now()}`,
+      mealName: meal.mealName,
+      mealType: meal.mealType,
+      totalCalories: meal.totalCalories,
+      macros: { ...meal.macros },
+      healthScore: meal.healthScore || 82,
+      useCount: 1,
+      lastUsedAt: new Date().toISOString(),
+    };
+    setUserState((prev) => {
+      const filtered = (prev.savedTemplates || []).filter(
+        (t) => t.mealName.trim().toLowerCase() !== meal.mealName.trim().toLowerCase()
+      );
+      return {
+        ...prev,
+        savedTemplates: [newTpl, ...filtered],
+      };
+    });
+  }
+
+  function handleDeleteTemplate(id: string) {
+    setUserState((prev) => ({
+      ...prev,
+      savedTemplates: (prev.savedTemplates || []).filter((t) => t.id !== id),
+    }));
+  }
+
+  function handleQuickLogTemplate(
+    template: Omit<SavedMealTemplate, 'id' | 'useCount' | 'lastUsedAt'>,
+    saveToStaples: boolean,
+    targetDate: string = todayKey
+  ) {
+    const xpCalc = calculateMealXp(template.healthScore || 80);
+    const newMeal: MealLog = {
+      id: `meal_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      dateKey: targetDate,
+      mealType: template.mealType,
+      mealName: template.mealName,
+      emoji: 'utensils',
+      totalCalories: template.totalCalories,
+      macros: { ...template.macros },
+      items: [],
+      healthScore: template.healthScore || 80,
+      wittyFeedback: 'Logged from your frequent meals library.',
+      confidence: 'high',
+      xpEarned: xpCalc.totalXp,
+      portionMultiplier: 1,
+    };
+
+    const updatedMeals = [newMeal, ...meals];
+    const streakInfo = updateStreakOnLog(userState, todayKey);
+    const newTotalXp = userState.xp + xpCalc.totalXp;
+
+    setMeals(updatedMeals);
+    setUserState((prev) => {
+      let nextTemplates = prev.savedTemplates || [];
+      if (saveToStaples) {
+        const filtered = nextTemplates.filter(
+          (t) => t.mealName.trim().toLowerCase() !== template.mealName.trim().toLowerCase()
+        );
+        nextTemplates = [
+          {
+            id: `tpl_${Date.now()}`,
+            ...template,
+            useCount: 1,
+            lastUsedAt: new Date().toISOString(),
+          },
+          ...filtered,
+        ];
+      }
+      return {
+        ...prev,
+        xp: newTotalXp,
+        streakDays: streakInfo.streakDays,
+        longestStreak: streakInfo.longestStreak,
+        streakFreezes: streakInfo.streakFreezes,
+        lastLoggedDate: todayKey,
+        savedTemplates: nextTemplates,
+      };
+    });
+  }
+
   function handleFinishOnboarding() {
     if (apiKeyInput.trim()) {
       setStoredApiKey(apiKeyInput);
@@ -443,13 +664,18 @@ export default function App() {
       carbsGrams: metabolicResult.recommendedMacros.carbsGrams,
       fatGrams: metabolicResult.recommendedMacros.fatGrams,
       fiberGrams: metabolicResult.recommendedMacros.fiberGrams,
+      waterMl: metabolicResult.recommendedWaterMl,
     };
     setGoalsDraft(newGoals);
+    const existingToday = userState.dailyJournal?.[todayKey];
     const todayEntry: DailyJournalEntry = {
       dateKey: todayKey,
       weightKg: biometricsDraft.weightKg,
-      energyLevel: 'steady',
-      note: `Calibrated scientific target: ${metabolicResult.targetDailyCalories} kcal/day (${biometricsDraft.weightKg}kg -> ${biometricsDraft.targetWeightKg}kg).`,
+      waterMl: existingToday?.waterMl || 0,
+      energyLevel: existingToday?.energyLevel || 'steady',
+      note:
+        existingToday?.note ||
+        `Calibrated scientific target: ${metabolicResult.targetDailyCalories} kcal/day (${biometricsDraft.weightKg}kg -> ${biometricsDraft.targetWeightKg}kg).`,
       updatedAt: new Date().toISOString(),
     };
     setUserState((prev) => ({
@@ -470,9 +696,11 @@ export default function App() {
 
   function handleSaveDailyJournalEntry() {
     const parsedWeight = journalWeightDraft.trim() ? Number(journalWeightDraft) : undefined;
+    const existing = userState.dailyJournal?.[selectedJournalDate];
     const entry: DailyJournalEntry = {
       dateKey: selectedJournalDate,
       weightKg: parsedWeight && !Number.isNaN(parsedWeight) ? parsedWeight : undefined,
+      waterMl: existing?.waterMl || 0,
       note: journalNoteDraft.trim() || undefined,
       energyLevel: journalEnergyDraft,
       updatedAt: new Date().toISOString(),
@@ -724,6 +952,7 @@ export default function App() {
       carbsGrams: metabolicResult.recommendedMacros.carbsGrams,
       fatGrams: metabolicResult.recommendedMacros.fatGrams,
       fiberGrams: metabolicResult.recommendedMacros.fiberGrams,
+      waterMl: metabolicResult.recommendedWaterMl,
     };
     setGoalsDraft(newGoals);
     setUserState((prev) => ({
@@ -748,6 +977,7 @@ export default function App() {
         carbsGrams: Math.max(20, Number(goalsDraft.carbsGrams) || 220),
         fatGrams: Math.max(15, Number(goalsDraft.fatGrams) || 70),
         fiberGrams: Math.max(10, Number(goalsDraft.fiberGrams) || 30),
+        waterMl: Math.max(500, Number(goalsDraft.waterMl) || 2700),
       },
       customPromptInstruction: customPromptDraft,
     }));
@@ -782,7 +1012,6 @@ export default function App() {
   if (showOnboarding) {
     return (
       <div className="min-h-[100dvh] bg-m3-surface text-m3-cream flex flex-col justify-between max-w-md mx-auto px-5 py-6 relative overflow-x-hidden">
-        {/* Warm Terracotta & Sunlit Peach Radial Glow */}
         <div
           className="pointer-events-none fixed inset-x-0 top-0 h-96 max-w-md mx-auto z-0"
           style={{
@@ -791,7 +1020,6 @@ export default function App() {
           }}
         />
 
-        {/* Top Brand Bar + Step Progress Pills */}
         <div className="relative z-10 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
@@ -810,7 +1038,7 @@ export default function App() {
                 onClick={() => setShowOnboarding(false)}
                 className="px-3.5 py-1.5 rounded-full bg-m3-surfaceContainer text-m3-sand text-xs font-bold border border-white/[0.08]"
               >
-                Skip
+                Close
               </button>
             )}
           </div>
@@ -827,7 +1055,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Step Content Area */}
         <div className="relative z-10 my-auto py-4">
           <AnimatePresence mode="wait">
             {/* STEP 1: NAME, SEX, AGE, HEIGHT, WEIGHT, BODY FAT % */}
@@ -855,7 +1082,6 @@ export default function App() {
                 </div>
 
                 <div className="rounded-[32px] bg-m3-surfaceContainer border border-white/[0.08] p-5 space-y-4">
-                  {/* Name Input */}
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-m3-sand mb-1.5">
                       Your Name
@@ -869,7 +1095,6 @@ export default function App() {
                     />
                   </div>
 
-                  {/* Biological Sex & Resistance Training */}
                   <div className="grid grid-cols-2 gap-2.5">
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-wider text-m3-sand mb-1.5">
@@ -897,39 +1122,32 @@ export default function App() {
                       <label className="block text-xs font-bold uppercase tracking-wider text-m3-sand mb-1.5">
                         Age (Years)
                       </label>
-                      <input
-                        type="number"
-                        min="14"
-                        max="100"
+                      <NumericField
                         value={biometricsDraft.age}
-                        onChange={(e) =>
-                          setBiometricsDraft((b) => ({
-                            ...b,
-                            age: Number(e.target.value) || 24,
-                          }))
-                        }
+                        onChangeNumber={(val) => {
+                          if (val !== undefined) {
+                            setBiometricsDraft((b) => ({ ...b, age: val }));
+                          }
+                        }}
+                        placeholder="24"
                         className="w-full px-4 py-2.5 rounded-full bg-m3-surfaceLow border border-white/[0.1] text-lg font-mono tabular-nums font-extrabold text-m3-cream text-center"
                       />
                     </div>
                   </div>
 
-                  {/* Height, Current Weight, Optional Body Fat % */}
                   <div className="grid grid-cols-3 gap-2.5">
                     <div>
                       <label className="block text-xs font-bold text-m3-sand mb-1">
                         Height (cm)
                       </label>
-                      <input
-                        type="number"
-                        min="120"
-                        max="230"
+                      <NumericField
                         value={biometricsDraft.heightCm}
-                        onChange={(e) =>
-                          setBiometricsDraft((b) => ({
-                            ...b,
-                            heightCm: Number(e.target.value) || 175,
-                          }))
-                        }
+                        onChangeNumber={(val) => {
+                          if (val !== undefined) {
+                            setBiometricsDraft((b) => ({ ...b, heightCm: val }));
+                          }
+                        }}
+                        placeholder="176"
                         className="w-full px-3 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.1] text-lg font-mono tabular-nums font-extrabold text-m3-cream text-center"
                       />
                     </div>
@@ -938,18 +1156,15 @@ export default function App() {
                       <label className="block text-xs font-bold text-m3-sand mb-1">
                         Weight (kg)
                       </label>
-                      <input
-                        type="number"
-                        step="0.5"
-                        min="35"
-                        max="250"
+                      <NumericField
                         value={biometricsDraft.weightKg}
-                        onChange={(e) =>
-                          setBiometricsDraft((b) => ({
-                            ...b,
-                            weightKg: Number(e.target.value) || 75,
-                          }))
-                        }
+                        step="0.5"
+                        onChangeNumber={(val) => {
+                          if (val !== undefined) {
+                            setBiometricsDraft((b) => ({ ...b, weightKg: val }));
+                          }
+                        }}
+                        placeholder="76"
                         className="w-full px-3 py-3 rounded-[20px] bg-m3-surfaceLow border border-m3-primary/40 text-lg font-mono tabular-nums font-extrabold text-m3-primary text-center"
                       />
                     </div>
@@ -958,16 +1173,12 @@ export default function App() {
                       <label className="block text-xs font-bold text-m3-sand mb-1">
                         Body Fat %
                       </label>
-                      <input
-                        type="number"
-                        placeholder={`~${metabolicResult.estimatedBodyFatPct}%`}
-                        value={biometricsDraft.bodyFatPct ?? ''}
-                        onChange={(e) =>
-                          setBiometricsDraft((b) => ({
-                            ...b,
-                            bodyFatPct: e.target.value ? Number(e.target.value) : undefined,
-                          }))
+                      <NumericField
+                        value={biometricsDraft.bodyFatPct}
+                        onChangeNumber={(val) =>
+                          setBiometricsDraft((b) => ({ ...b, bodyFatPct: val }))
                         }
+                        placeholder={`~${metabolicResult.estimatedBodyFatPct}%`}
                         className="w-full px-3 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.1] text-base font-mono tabular-nums font-bold text-m3-cream placeholder-m3-muted text-center"
                       />
                     </div>
@@ -998,7 +1209,6 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* Target Weight & Timeline */}
                 <div className="rounded-[32px] bg-m3-surfaceContainer border border-white/[0.08] p-5 space-y-4">
                   <div className="grid grid-cols-3 gap-2">
                     {[
@@ -1008,7 +1218,7 @@ export default function App() {
                         onClick: () =>
                           setBiometricsDraft((b) => ({
                             ...b,
-                            targetWeightKg: Math.max(45, Math.round((b.weightKg - 6) * 2) / 2),
+                            targetWeightKg: Math.max(40, Math.round((b.weightKg - 6) * 2) / 2),
                           })),
                         active: biometricsDraft.targetWeightKg < biometricsDraft.weightKg,
                       },
@@ -1054,16 +1264,15 @@ export default function App() {
                       <label className="block text-xs font-bold text-m3-sand mb-1">
                         Target Weight (kg)
                       </label>
-                      <input
-                        type="number"
-                        step="0.5"
+                      <NumericField
                         value={biometricsDraft.targetWeightKg}
-                        onChange={(e) =>
-                          setBiometricsDraft((b) => ({
-                            ...b,
-                            targetWeightKg: Number(e.target.value) || b.weightKg,
-                          }))
-                        }
+                        step="0.5"
+                        onChangeNumber={(val) => {
+                          if (val !== undefined) {
+                            setBiometricsDraft((b) => ({ ...b, targetWeightKg: val }));
+                          }
+                        }}
+                        placeholder="70"
                         className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-m3-primary/40 text-xl font-mono tabular-nums font-extrabold text-m3-primary text-center"
                       />
                     </div>
@@ -1071,23 +1280,22 @@ export default function App() {
                       <label className="block text-xs font-bold text-m3-sand mb-1">
                         Timeline (weeks)
                       </label>
-                      <input
-                        type="number"
-                        min="2"
-                        max="104"
+                      <NumericField
                         value={biometricsDraft.targetTimelineWeeks}
-                        onChange={(e) =>
-                          setBiometricsDraft((b) => ({
-                            ...b,
-                            targetTimelineWeeks: Math.max(2, Number(e.target.value) || 12),
-                          }))
-                        }
+                        onChangeNumber={(val) => {
+                          if (val !== undefined) {
+                            setBiometricsDraft((b) => ({
+                              ...b,
+                              targetTimelineWeeks: val,
+                            }));
+                          }
+                        }}
+                        placeholder="12"
                         className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.1] text-xl font-mono tabular-nums font-extrabold text-m3-cream text-center"
                       />
                     </div>
                   </div>
 
-                  {/* Resistance Training Toggle */}
                   <button
                     type="button"
                     onClick={() =>
@@ -1112,7 +1320,6 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Activity Level List */}
                 <div className="space-y-1.5">
                   <label className="block text-xs font-bold uppercase tracking-wider text-m3-sand px-1">
                     Physical Activity Level (PAL Multiplier)
@@ -1168,7 +1375,6 @@ export default function App() {
                   </h1>
                 </div>
 
-                {/* Big Texted Scientific Prescription Card */}
                 <div className="rounded-[34px] bg-m3-primaryContainer border border-m3-primary/40 p-5 text-center space-y-3">
                   <span className="text-xs font-mono uppercase tracking-widest text-m3-onPrimaryContainer/80 block">
                     Hall (Lancet 2011) + Forbes (1987) Daily Target
@@ -1192,7 +1398,7 @@ export default function App() {
                       { label: 'Protein', val: `${metabolicResult.recommendedMacros.proteinGrams}g` },
                       { label: 'Carbs', val: `${metabolicResult.recommendedMacros.carbsGrams}g` },
                       { label: 'Fat', val: `${metabolicResult.recommendedMacros.fatGrams}g` },
-                      { label: 'Fiber', val: `${metabolicResult.recommendedMacros.fiberGrams}g` },
+                      { label: 'Water', val: `${metabolicResult.recommendedWaterMl}ml` },
                     ].map((m) => (
                       <div key={m.label} className="p-2.5 rounded-2xl bg-black/25">
                         <span className="text-xs text-m3-onPrimaryContainer/70 block">{m.label}</span>
@@ -1204,7 +1410,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Mathematical Breakdown Ledger + Vector Curve */}
                 <div className="rounded-[30px] bg-m3-surfaceContainer border border-white/[0.08] p-4 space-y-3">
                   <MetabolicEquationVector className="w-full h-20" />
                   <div className="rounded-2xl bg-m3-surfaceLow border border-white/[0.06] divide-y divide-white/[0.06] text-xs">
@@ -1238,7 +1443,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Optional API Key Quick Input */}
                 <div className="rounded-[28px] bg-m3-surfaceContainer border border-white/[0.08] p-4 space-y-2.5">
                   <label className="block text-xs font-bold text-m3-sand">
                     Gemini Vision API Key (Optional — can also set in Settings)
@@ -1256,7 +1460,6 @@ export default function App() {
           </AnimatePresence>
         </div>
 
-        {/* Bottom Navigation Buttons for Onboarding */}
         <div className="relative z-10 flex items-center gap-3 pt-2">
           {onboardingStep > 0 && (
             <button
@@ -1294,7 +1497,6 @@ export default function App() {
 
   return (
     <div className="min-h-[100dvh] bg-m3-surface text-m3-cream flex flex-col max-w-md mx-auto relative overflow-x-hidden selection:bg-m3-primary/30 border-x border-white/[0.04]">
-      {/* Warm Terracotta Atmospheric Top Glow */}
       <div
         className="pointer-events-none fixed inset-x-0 top-0 h-80 max-w-md mx-auto z-0"
         style={{
@@ -1328,7 +1530,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Warm Streak Pill */}
           <button
             onClick={() => setActiveTab('journal')}
             className="flex items-center gap-2 bg-m3-surfaceContainer border border-white/[0.08] px-4 py-2.5 rounded-full active:scale-95 transition-transform"
@@ -1519,9 +1720,9 @@ export default function App() {
                     </span>
                   </div>
                   <div className="rounded-[22px] bg-m3-surfaceLow px-3.5 py-2.5">
-                    <span className="text-xs text-m3-muted block">Meals</span>
-                    <span className="text-lg font-mono tabular-nums font-extrabold text-m3-cream">
-                      {todayMeals.length} logged
+                    <span className="text-xs text-m3-muted block">Water</span>
+                    <span className="text-lg font-mono tabular-nums font-extrabold text-m3-sage">
+                      {todayWaterMl}ml
                     </span>
                   </div>
                   <div className="rounded-[22px] bg-m3-surfaceLow px-3.5 py-2.5">
@@ -1535,31 +1736,105 @@ export default function App() {
                 </div>
               </section>
 
-              {/* BIG ROUNDED CAMERA SCAN CTA */}
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setActiveTab('scan')}
-                className="w-full p-5 rounded-[34px] bg-m3-primary hover:bg-m3-primarySoft text-m3-surface flex items-center justify-between shadow-lg transition-colors group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-full bg-m3-surface text-m3-primary flex items-center justify-center shrink-0">
-                    <Camera className="w-6 h-6" />
+              {/* PRIMARY ACTION ROW: SNAP PHOTO + FREQUENT / QUICK ADD */}
+              <div className="grid grid-cols-12 gap-3">
+                <motion.button
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setActiveTab('scan')}
+                  className="col-span-8 p-4 rounded-[32px] bg-m3-primary hover:bg-m3-primarySoft text-m3-surface flex items-center justify-between shadow-lg transition-colors group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-m3-surface text-m3-primary flex items-center justify-center shrink-0">
+                      <Camera className="w-5 h-5" />
+                    </div>
+                    <div className="text-left">
+                      <h2 className="text-base font-display font-extrabold tracking-tight">
+                        Snap Meal Photo
+                      </h2>
+                      <p className="text-xs font-medium text-m3-surface/80">
+                        AI Vision Scan (+XP)
+                      </p>
+                    </div>
                   </div>
-                  <div className="text-left">
-                    <h2 className="text-lg font-display font-extrabold tracking-tight">
-                      Snap & Analyze Meal
-                    </h2>
-                    <p className="text-xs font-medium text-m3-surface/80">
-                      Instant visual portion & macro breakdown (+50-100 XP)
-                    </p>
-                  </div>
-                </div>
-                <div className="w-10 h-10 rounded-full bg-m3-surface/15 flex items-center justify-center group-hover:translate-x-0.5 transition-transform">
-                  <ChevronRight className="w-5 h-5" />
-                </div>
-              </motion.button>
+                  <ChevronRight className="w-5 h-5 shrink-0" />
+                </motion.button>
 
-              {/* TODAY'S MEAL TIMELINE WITH CUSTOM VECTOR EMPTY STATE */}
+                <motion.button
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setQuickAddModalDate(todayKey)}
+                  className="col-span-4 p-4 rounded-[32px] bg-m3-surfaceContainer hover:bg-m3-surfaceHigh border border-m3-primary/30 text-m3-cream flex flex-col items-center justify-center text-center gap-1"
+                >
+                  <Repeat className="w-5 h-5 text-m3-primary" />
+                  <span className="text-xs font-display font-extrabold leading-tight">
+                    Frequent / Quick Add
+                  </span>
+                </motion.button>
+              </div>
+
+              {/* 1-TAP REPETITIVE MEALS STRIP (IF USER HAS PREVIOUS OR SAVED MEALS) */}
+              {frequentMealsList.length > 0 && (
+                <section className="rounded-[30px] bg-m3-surfaceContainer border border-white/[0.07] p-4 space-y-2.5">
+                  <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center gap-2">
+                      <Repeat className="w-4 h-4 text-m3-primary" />
+                      <span className="text-xs font-display font-extrabold uppercase tracking-wider text-m3-sand">
+                        1-Tap Repetitive Meals
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setQuickAddModalDate(todayKey)}
+                      className="text-xs font-display font-bold text-m3-primary hover:underline"
+                    >
+                      View All / + Custom
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {frequentMealsList.slice(0, 6).map((tpl) => (
+                      <button
+                        key={tpl.id}
+                        onClick={() =>
+                          handleQuickLogTemplate(
+                            {
+                              mealName: tpl.mealName,
+                              mealType: tpl.mealType,
+                              totalCalories: tpl.totalCalories,
+                              macros: tpl.macros,
+                              healthScore: tpl.healthScore,
+                            },
+                            false,
+                            todayKey
+                          )
+                        }
+                        className="px-3.5 py-2.5 rounded-[22px] bg-m3-surfaceLow hover:bg-m3-surfaceHigh border border-white/[0.07] shrink-0 text-left flex items-center gap-2.5 active:scale-95 transition-all"
+                      >
+                        <div>
+                          <p className="text-xs font-display font-bold text-m3-cream max-w-[140px] truncate">
+                            {tpl.mealName}
+                          </p>
+                          <p className="text-xs font-mono text-m3-primary font-bold">
+                            +{tpl.totalCalories} kcal • P {tpl.macros.proteinGrams}g
+                          </p>
+                        </div>
+                        <div className="w-7 h-7 rounded-full bg-m3-primary/20 text-m3-primary flex items-center justify-center">
+                          <Plus className="w-4 h-4 stroke-[2.5]" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* WATER / HYDRATION TRACKER CARD (GLASS 250ML, BOTTLE 500ML, LARGE 750ML, CUSTOM) */}
+              <HydrationTrackerCard
+                dateLabel="Today"
+                currentWaterMl={todayWaterMl}
+                targetWaterMl={userState.goals.waterMl || 2700}
+                onAddWater={(delta) => updateWaterForDate(todayKey, todayWaterMl + delta)}
+                onSetWater={(exact) => updateWaterForDate(todayKey, exact)}
+              />
+
+              {/* TODAY'S MEAL TIMELINE WITH EDIT & DELETE */}
               <section className="space-y-3">
                 <div className="flex items-center justify-between px-1">
                   <h2 className="text-lg font-display font-extrabold text-m3-cream">
@@ -1580,7 +1855,7 @@ export default function App() {
                       Your plate journal is empty today
                     </p>
                     <p className="text-xs text-m3-sand mt-1 max-w-xs mx-auto leading-relaxed">
-                      Tap "Snap & Analyze Meal" above to take a photo of your food and compute its calories and macros.
+                      Snap a meal photo or use "Frequent / Quick Add" above to log your food.
                     </p>
                   </div>
                 ) : (
@@ -1591,17 +1866,17 @@ export default function App() {
                         layout
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="rounded-[30px] bg-m3-surfaceContainer border border-white/[0.08] p-4 flex gap-4 items-center"
+                        className="rounded-[30px] bg-m3-surfaceContainer border border-white/[0.08] p-4 flex gap-3.5 items-center"
                       >
                         {meal.photoDataUrl ? (
                           <img
                             src={meal.photoDataUrl}
                             alt={meal.mealName}
-                            className="w-20 h-20 rounded-[22px] object-cover shrink-0 border border-white/[0.1]"
+                            className="w-16 h-16 rounded-[20px] object-cover shrink-0 border border-white/[0.1]"
                           />
                         ) : (
-                          <div className="w-20 h-20 rounded-[22px] bg-m3-surfaceHigh flex items-center justify-center text-m3-primary shrink-0 border border-white/[0.08]">
-                            <RenderVectorIcon name={meal.mealType} className="w-7 h-7" />
+                          <div className="w-16 h-16 rounded-[20px] bg-m3-surfaceHigh flex items-center justify-center text-m3-primary shrink-0 border border-white/[0.08]">
+                            <RenderVectorIcon name={meal.mealType} className="w-6 h-6" />
                           </div>
                         )}
 
@@ -1611,29 +1886,35 @@ export default function App() {
                               {meal.mealType}
                             </span>
                             <span className="text-xs font-mono tabular-nums text-m3-primary font-bold">
-                              Score {meal.healthScore}
+                              {meal.totalCalories} kcal
                             </span>
                           </div>
                           <h3 className="text-base font-display font-extrabold text-m3-cream truncate mt-1">
                             {meal.mealName}
                           </h3>
-                          <div className="flex items-center gap-3 mt-1.5 text-xs font-mono tabular-nums">
-                            <span className="text-m3-cream font-extrabold text-sm">
-                              {meal.totalCalories} kcal
-                            </span>
+                          <div className="flex items-center gap-2.5 mt-1 text-xs font-mono tabular-nums">
                             <span className="text-m3-primarySoft">P {meal.macros.proteinGrams}g</span>
                             <span className="text-m3-amber">C {meal.macros.carbsGrams}g</span>
                             <span className="text-m3-rose">F {meal.macros.fatGrams}g</span>
                           </div>
                         </div>
 
-                        <button
-                          onClick={() => handleDeleteMeal(meal.id)}
-                          className="p-2.5 rounded-full bg-m3-surfaceLow text-m3-muted hover:text-m3-rose transition-colors"
-                          title="Delete meal"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => setEditingMeal(meal)}
+                            className="p-2.5 rounded-full bg-m3-surfaceLow text-m3-sand hover:text-m3-primary transition-colors"
+                            title="Edit meal"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteMeal(meal.id)}
+                            className="p-2.5 rounded-full bg-m3-surfaceLow text-m3-muted hover:text-m3-rose transition-colors"
+                            title="Delete meal"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </motion.div>
                     ))}
                   </div>
@@ -1642,7 +1923,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* TAB 2: MULTI-DAY JOURNAL & HISTORY */}
+          {/* TAB 2: MULTI-DAY JOURNAL & HISTORY (WITH EDITING, QUICK ADD & HYDRATION) */}
           {activeTab === 'journal' && (
             <motion.div
               key="journal"
@@ -1783,6 +2064,17 @@ export default function App() {
                 </div>
               </section>
 
+              {/* WATER INTAKE FOR SELECTED JOURNAL DATE */}
+              <HydrationTrackerCard
+                dateLabel={selectedJournalDate === todayKey ? 'Today' : selectedJournalDate}
+                currentWaterMl={selectedDateWaterMl}
+                targetWaterMl={userState.goals.waterMl || 2700}
+                onAddWater={(delta) =>
+                  updateWaterForDate(selectedJournalDate, selectedDateWaterMl + delta)
+                }
+                onSetWater={(exact) => updateWaterForDate(selectedJournalDate, exact)}
+              />
+
               {/* SELECTED DAY SUMMARY + WEIGHT & REFLECTION CHECK-IN */}
               <section className="rounded-[36px] bg-m3-surfaceContainer border border-white/[0.08] p-6 space-y-4">
                 <div className="flex items-center justify-between">
@@ -1793,8 +2085,8 @@ export default function App() {
                         {selectedJournalDate === todayKey ? 'Today' : selectedJournalDate}
                       </h2>
                       <p className="text-xs text-m3-sand">
-                        {selectedDateMeals.length} meals • {selectedDateTotals.calories} kcal • P{' '}
-                        {selectedDateTotals.protein}g
+                        {selectedDateMeals.length} meals • P {selectedDateTotals.protein}g •{' '}
+                        {selectedDateWaterMl}ml water
                       </p>
                     </div>
                   </div>
@@ -1868,20 +2160,30 @@ export default function App() {
                 )}
               </section>
 
-              {/* MEALS LOGGED ON SELECTED DATE */}
+              {/* MEALS LOGGED ON SELECTED DATE (WITH EDIT, DELETE & ADD TO THIS DATE) */}
               <section className="space-y-3">
-                <h3 className="text-base font-display font-extrabold text-m3-cream px-1">
-                  Meals on {selectedJournalDate} ({selectedDateMeals.length})
-                </h3>
+                <div className="flex items-center justify-between px-1">
+                  <h3 className="text-base font-display font-extrabold text-m3-cream">
+                    Meals on {selectedJournalDate} ({selectedDateMeals.length})
+                  </h3>
+                  <button
+                    onClick={() => setQuickAddModalDate(selectedJournalDate)}
+                    className="px-3.5 py-1.5 rounded-full bg-m3-primaryContainer border border-m3-primary/35 text-m3-onPrimaryContainer text-xs font-display font-bold flex items-center gap-1"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-m3-primary" />
+                    <span>Add Food to Date</span>
+                  </button>
+                </div>
+
                 {selectedDateMeals.length === 0 ? (
                   <div className="rounded-[30px] bg-m3-surfaceContainer border border-white/[0.07] p-6 text-center text-xs text-m3-sand">
-                    No meals recorded on {selectedJournalDate}.
+                    No meals recorded on {selectedJournalDate}. Tap "Add Food to Date" to log a meal for this day.
                   </div>
                 ) : (
                   selectedDateMeals.map((meal) => (
                     <div
                       key={meal.id}
-                      className="rounded-[30px] bg-m3-surfaceContainer border border-white/[0.08] p-4 flex gap-4 items-center"
+                      className="rounded-[30px] bg-m3-surfaceContainer border border-white/[0.08] p-4 flex gap-3.5 items-center"
                     >
                       {meal.photoDataUrl ? (
                         <img
@@ -1906,6 +2208,23 @@ export default function App() {
                           {meal.macros.carbsGrams}g • F {meal.macros.fatGrams}g
                         </p>
                       </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => setEditingMeal(meal)}
+                          className="p-2.5 rounded-full bg-m3-surfaceLow text-m3-sand hover:text-m3-primary transition-colors"
+                          title="Edit meal"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteMeal(meal.id)}
+                          className="p-2.5 rounded-full bg-m3-surfaceLow text-m3-muted hover:text-m3-rose transition-colors"
+                          title="Delete meal"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   ))
                 )}
@@ -1924,15 +2243,23 @@ export default function App() {
               className="space-y-4"
             >
               <div className="rounded-[36px] bg-m3-surfaceContainer border border-white/[0.08] p-6">
-                <span className="text-xs font-mono uppercase tracking-widest text-m3-primary font-semibold block">
-                  Multimodal Food Vision
-                </span>
-                <h1 className="text-2xl font-display font-extrabold text-m3-cream tracking-tight mt-0.5">
-                  Visual Plate Scanner
-                </h1>
-                <p className="text-sm text-m3-sand mt-1">
-                  Snap a photo or pick from your gallery for itemized portion and nutrition analysis.
-                </p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-mono uppercase tracking-widest text-m3-primary font-semibold block">
+                      Multimodal Food Vision
+                    </span>
+                    <h1 className="text-2xl font-display font-extrabold text-m3-cream tracking-tight mt-0.5">
+                      Visual Plate Scanner
+                    </h1>
+                  </div>
+                  <button
+                    onClick={() => setQuickAddModalDate(todayKey)}
+                    className="px-3.5 py-2 rounded-full bg-m3-surfaceHigh text-m3-cream border border-white/[0.08] text-xs font-display font-bold flex items-center gap-1.5"
+                  >
+                    <Repeat className="w-3.5 h-3.5 text-m3-primary" />
+                    <span>Frequent</span>
+                  </button>
+                </div>
 
                 <input
                   ref={fileInputRef}
@@ -1943,7 +2270,7 @@ export default function App() {
                   className="hidden"
                 />
 
-                {/* Segmented Meal Type Bar with Shared Spring Pill */}
+                {/* Segmented Meal Type Bar */}
                 <div className="grid grid-cols-4 gap-1.5 mt-5 p-1.5 rounded-full bg-m3-surfaceLow border border-white/[0.06]">
                   {(['breakfast', 'lunch', 'dinner', 'snack'] as const).map((type) => {
                     const active = mealType === type;
@@ -1969,7 +2296,6 @@ export default function App() {
                   })}
                 </div>
 
-                {/* Camera / Image Preview Frame with Bespoke Vector Illustration */}
                 {!capturedPhotoUrl ? (
                   <div className="mt-5 border border-dashed border-white/[0.15] rounded-[32px] p-7 text-center bg-m3-surfaceLow">
                     <ScannerViewfinderVector className="w-28 h-24 mx-auto mb-2" />
@@ -2223,7 +2549,6 @@ export default function App() {
               transition={M3_SPRING}
               className="space-y-4"
             >
-              {/* Daily Quests Card */}
               <section className="rounded-[36px] bg-m3-surfaceContainer border border-white/[0.08] p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div>
@@ -2303,7 +2628,6 @@ export default function App() {
                 </div>
               </section>
 
-              {/* Badges Grid */}
               <div className="rounded-[36px] bg-m3-surfaceContainer border border-white/[0.08] p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
@@ -2388,7 +2712,7 @@ export default function App() {
                 </button>
               </div>
 
-              {/* SCIENTIFIC BODY MATH & BIOMETRICS ENGINE (NOW INSIDE SETTINGS) */}
+              {/* SCIENTIFIC BODY MATH & BIOMETRICS ENGINE (INSIDE SETTINGS) */}
               <div className="rounded-[36px] bg-m3-surfaceContainer border border-white/[0.08] p-6 space-y-4">
                 <div className="flex items-start justify-between gap-2">
                   <div>
@@ -2425,7 +2749,8 @@ export default function App() {
                     <span className="text-xs font-mono tabular-nums text-m3-onPrimaryContainer/90 mt-1 block">
                       P {metabolicResult.recommendedMacros.proteinGrams}g • C{' '}
                       {metabolicResult.recommendedMacros.carbsGrams}g • F{' '}
-                      {metabolicResult.recommendedMacros.fatGrams}g
+                      {metabolicResult.recommendedMacros.fatGrams}g •{' '}
+                      {metabolicResult.recommendedWaterMl}ml
                     </span>
                   </div>
 
@@ -2440,7 +2765,7 @@ export default function App() {
                 {mathAppliedToast && (
                   <div className="px-4 py-2.5 rounded-full bg-m3-primaryContainer border border-m3-primary/40 text-m3-onPrimaryContainer text-xs font-bold flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-m3-primary shrink-0" />
-                    <span>Scientific calorie & macro targets applied to your journal.</span>
+                    <span>Scientific calorie, macro & water targets applied.</span>
                   </div>
                 )}
 
@@ -2474,10 +2799,9 @@ export default function App() {
                     </span>
                   </div>
                   <div className="px-4 py-2.5 flex items-center justify-between">
-                    <span className="text-m3-sand">Hall Adaptation (ε = 22)</span>
-                    <span className="font-mono tabular-nums text-m3-cream font-semibold">
-                      {metabolicResult.metabolicAdaptationKcal >= 0 ? '+' : ''}
-                      {metabolicResult.metabolicAdaptationKcal} kcal/d
+                    <span className="text-m3-sand">Hydration Prescription (35ml/kg+)</span>
+                    <span className="font-mono tabular-nums text-m3-sage font-bold">
+                      {metabolicResult.recommendedWaterMl} ml/d
                     </span>
                   </div>
                 </div>
@@ -2505,7 +2829,7 @@ export default function App() {
                           <strong className="text-m3-cream">2. Forbes Partitioning (1987):</strong>{' '}
                           Non-linear lean vs adipose tissue fraction:
                           <span className="block font-mono text-m3-muted mt-0.5">
-                            p = C / (C + FM), C = 10.4 * (rho_L / rho_F) = 1.996 kg
+                            p = C / (C + FM), rho_F = 7700 kcal/kg, rho_L = 1800 kcal/kg
                           </span>
                         </p>
                         <p>
@@ -2514,7 +2838,7 @@ export default function App() {
                           </strong>{' '}
                           Dynamic adaptation (ε = 22 kcal/kg/d):
                           <span className="block font-mono text-m3-muted mt-0.5">
-                            Delta_E = [rho_eff * (Delta_W / t)] + [0.5 * 22 * Delta_W]
+                            Delta_E = [rho_eff * (Delta_W / t)] + [0.25 * 22 * Delta_W]
                           </span>
                         </p>
                       </div>
@@ -2522,7 +2846,7 @@ export default function App() {
                   )}
                 </AnimatePresence>
 
-                {/* Biometric Inputs inside Settings */}
+                {/* Biometric Inputs inside Settings (Using NumericField for smooth typing) */}
                 <div className="pt-2 space-y-3">
                   <div>
                     <label className="block text-xs font-bold text-m3-sand mb-1">Your Name</label>
@@ -2572,44 +2896,38 @@ export default function App() {
                   <div className="grid grid-cols-3 gap-2.5">
                     <div>
                       <label className="block text-xs text-m3-sand mb-1">Age (yr)</label>
-                      <input
-                        type="number"
+                      <NumericField
                         value={biometricsDraft.age}
-                        onChange={(e) =>
-                          setBiometricsDraft((b) => ({
-                            ...b,
-                            age: Number(e.target.value) || 24,
-                          }))
-                        }
+                        onChangeNumber={(val) => {
+                          if (val !== undefined) {
+                            setBiometricsDraft((b) => ({ ...b, age: val }));
+                          }
+                        }}
                         className="w-full px-3 py-2.5 rounded-[18px] bg-m3-surfaceLow border border-white/[0.08] text-base font-mono tabular-nums font-bold text-m3-cream text-center"
                       />
                     </div>
                     <div>
                       <label className="block text-xs text-m3-sand mb-1">Height (cm)</label>
-                      <input
-                        type="number"
+                      <NumericField
                         value={biometricsDraft.heightCm}
-                        onChange={(e) =>
-                          setBiometricsDraft((b) => ({
-                            ...b,
-                            heightCm: Number(e.target.value) || 175,
-                          }))
-                        }
+                        onChangeNumber={(val) => {
+                          if (val !== undefined) {
+                            setBiometricsDraft((b) => ({ ...b, heightCm: val }));
+                          }
+                        }}
                         className="w-full px-3 py-2.5 rounded-[18px] bg-m3-surfaceLow border border-white/[0.08] text-base font-mono tabular-nums font-bold text-m3-cream text-center"
                       />
                     </div>
                     <div>
                       <label className="block text-xs text-m3-sand mb-1">Weight (kg)</label>
-                      <input
-                        type="number"
-                        step="0.5"
+                      <NumericField
                         value={biometricsDraft.weightKg}
-                        onChange={(e) =>
-                          setBiometricsDraft((b) => ({
-                            ...b,
-                            weightKg: Number(e.target.value) || 70,
-                          }))
-                        }
+                        step="0.5"
+                        onChangeNumber={(val) => {
+                          if (val !== undefined) {
+                            setBiometricsDraft((b) => ({ ...b, weightKg: val }));
+                          }
+                        }}
                         className="w-full px-3 py-2.5 rounded-[18px] bg-m3-surfaceLow border border-white/[0.08] text-base font-mono tabular-nums font-bold text-m3-cream text-center"
                       />
                     </div>
@@ -2618,35 +2936,54 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-2.5">
                     <div>
                       <label className="block text-xs text-m3-sand mb-1">Target Weight (kg)</label>
-                      <input
-                        type="number"
-                        step="0.5"
+                      <NumericField
                         value={biometricsDraft.targetWeightKg}
-                        onChange={(e) =>
-                          setBiometricsDraft((b) => ({
-                            ...b,
-                            targetWeightKg: Number(e.target.value) || 70,
-                          }))
-                        }
+                        step="0.5"
+                        onChangeNumber={(val) => {
+                          if (val !== undefined) {
+                            setBiometricsDraft((b) => ({ ...b, targetWeightKg: val }));
+                          }
+                        }}
                         className="w-full px-3 py-2.5 rounded-[18px] bg-m3-surfaceLow border border-m3-primary/40 text-base font-mono tabular-nums font-bold text-m3-primary text-center"
                       />
                     </div>
                     <div>
                       <label className="block text-xs text-m3-sand mb-1">Timeline (weeks)</label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="104"
+                      <NumericField
                         value={biometricsDraft.targetTimelineWeeks}
-                        onChange={(e) =>
-                          setBiometricsDraft((b) => ({
-                            ...b,
-                            targetTimelineWeeks: Math.max(1, Number(e.target.value) || 12),
-                          }))
-                        }
+                        onChangeNumber={(val) => {
+                          if (val !== undefined) {
+                            setBiometricsDraft((b) => ({
+                              ...b,
+                              targetTimelineWeeks: val,
+                            }));
+                          }
+                        }}
                         className="w-full px-3 py-2.5 rounded-[18px] bg-m3-surfaceLow border border-white/[0.08] text-base font-mono tabular-nums font-bold text-m3-cream text-center"
                       />
                     </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-m3-sand mb-1">Activity Level</label>
+                    <select
+                      value={biometricsDraft.activityLevel}
+                      onChange={(e) =>
+                        setBiometricsDraft((b) => ({
+                          ...b,
+                          activityLevel: e.target.value as BiometricsProfile['activityLevel'],
+                        }))
+                      }
+                      className="w-full px-4 py-3 rounded-full bg-m3-surfaceLow border border-white/[0.08] text-xs font-display font-bold text-m3-cream"
+                    >
+                      {(
+                        Object.keys(ACTIVITY_LABELS) as Array<BiometricsProfile['activityLevel']>
+                      ).map((k) => (
+                        <option key={k} value={k}>
+                          {ACTIVITY_LABELS[k].label} (×{ACTIVITY_LABELS[k].pal})
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               </div>
@@ -2862,6 +3199,34 @@ export default function App() {
           })}
         </div>
       </nav>
+
+      {/* EDIT MEAL MODAL */}
+      <AnimatePresence>
+        {editingMeal && (
+          <EditMealModal
+            meal={editingMeal}
+            onClose={() => setEditingMeal(null)}
+            onSave={handleSaveMealEdit}
+            onDelete={handleDeleteMeal}
+            onSaveAsTemplate={handleSaveMealAsTemplate}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* FREQUENT & QUICK ADD MODAL */}
+      <AnimatePresence>
+        {quickAddModalDate && (
+          <FrequentMealsModal
+            targetDateKey={quickAddModalDate}
+            frequentMeals={frequentMealsList}
+            onClose={() => setQuickAddModalDate(null)}
+            onQuickLogTemplate={(tpl, saveToStaples) =>
+              handleQuickLogTemplate(tpl, saveToStaples, quickAddModalDate)
+            }
+            onDeleteTemplate={handleDeleteTemplate}
+          />
+        )}
+      </AnimatePresence>
 
       {/* XP & LEVEL-UP MODAL OVERLAY */}
       <AnimatePresence>

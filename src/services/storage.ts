@@ -11,6 +11,7 @@ const defaultTargets = calculateScientificTargets(DEFAULT_BIOMETRICS);
 export const DEFAULT_USER_STATE: UserState = {
   userName: '',
   onboardingCompleted: false,
+  onboardingCompletedV2: false,
   xp: 0,
   streakDays: 0,
   longestStreak: 0,
@@ -19,12 +20,14 @@ export const DEFAULT_USER_STATE: UserState = {
   unlockedBadgeIds: [],
   claimedQuestIdsByDate: {},
   dailyJournal: {},
+  savedTemplates: [],
   goals: {
     dailyCalories: defaultTargets.targetDailyCalories,
     proteinGrams: defaultTargets.recommendedMacros.proteinGrams,
     carbsGrams: defaultTargets.recommendedMacros.carbsGrams,
     fatGrams: defaultTargets.recommendedMacros.fatGrams,
     fiberGrams: defaultTargets.recommendedMacros.fiberGrams,
+    waterMl: defaultTargets.recommendedWaterMl,
   },
   biometrics: DEFAULT_BIOMETRICS,
   customPromptInstruction: '',
@@ -85,9 +88,11 @@ export function normalizeUserState(parsed?: Partial<UserState> | null): UserStat
     ...DEFAULT_USER_STATE,
     ...parsed,
     dailyJournal: parsed.dailyJournal || {},
+    savedTemplates: Array.isArray(parsed.savedTemplates) ? parsed.savedTemplates : [],
     goals: {
       ...DEFAULT_USER_STATE.goals,
       ...(parsed.goals || {}),
+      waterMl: Number(parsed.goals?.waterMl) || DEFAULT_USER_STATE.goals.waterMl,
     },
     biometrics: {
       ...DEFAULT_BIOMETRICS,
@@ -164,7 +169,7 @@ export async function hydrateFromIndexedDb(): Promise<{
 export function exportJournalBackup(state: UserState, meals: MealLog[]): string {
   return JSON.stringify(
     {
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       userState: state,
       meals,
