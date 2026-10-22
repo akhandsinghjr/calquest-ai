@@ -107,6 +107,7 @@ export interface DailyQuest {
 export interface UserState {
   userName?: string;
   onboardingCompleted?: boolean;
+  onboardingCompletedV2?: boolean;
   xp: number;
   streakDays: number;
   longestStreak: number;

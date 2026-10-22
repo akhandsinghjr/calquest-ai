@@ -62,6 +62,13 @@ import type {
   UserState,
 } from './types';
 import {
+  CalQuestLogoMark,
+  EmptyPlateVector,
+  MetabolicEquationVector,
+  OnboardingHeroVector,
+  ScannerViewfinderVector,
+} from './components/BrandVectors';
+import {
   ALL_BADGES,
   calculateMealXp,
   computeDailyQuests,
@@ -93,7 +100,7 @@ import {
   saveUserState,
 } from './services/storage';
 
-type NavTab = 'dashboard' | 'journal' | 'scan' | 'math' | 'quests' | 'settings';
+type NavTab = 'dashboard' | 'journal' | 'scan' | 'quests' | 'settings';
 
 const M3_SPRING = {
   type: 'spring' as const,
@@ -214,11 +221,10 @@ export default function App() {
   const [meals, setMeals] = useState<MealLog[]>(() => loadMeals());
   const [userState, setUserState] = useState<UserState>(() => loadUserState());
 
-  // Onboarding wizard state
+  // Onboarding wizard state: guaranteed to launch if onboardingCompletedV2 is not yet true
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
     const initial = loadUserState();
-    const initialMeals = loadMeals();
-    return !initial.onboardingCompleted && initialMeals.length === 0;
+    return !initial.onboardingCompletedV2;
   });
   const [onboardingStep, setOnboardingStep] = useState<number>(0);
   const [nameDraft, setNameDraft] = useState<string>(() => loadUserState().userName || '');
@@ -289,11 +295,12 @@ export default function App() {
       if (idbMeals && idbMeals.length > meals.length) {
         setMeals(idbMeals);
       }
-      if (state && (state.xp > userState.xp || state.onboardingCompleted)) {
+      if (state && (state.xp > userState.xp || state.onboardingCompletedV2)) {
         setUserState(state);
         setGoalsDraft(state.goals);
         setBiometricsDraft(state.biometrics);
         if (state.userName) setNameDraft(state.userName);
+        if (state.onboardingCompletedV2) setShowOnboarding(false);
       }
     });
     return () => {
@@ -442,13 +449,14 @@ export default function App() {
       dateKey: todayKey,
       weightKg: biometricsDraft.weightKg,
       energyLevel: 'steady',
-      note: 'Started personal metabolic & nutrition journal.',
+      note: `Calibrated scientific target: ${metabolicResult.targetDailyCalories} kcal/day (${biometricsDraft.weightKg}kg -> ${biometricsDraft.targetWeightKg}kg).`,
       updatedAt: new Date().toISOString(),
     };
     setUserState((prev) => ({
       ...prev,
       userName: nameDraft.trim() || 'Explorer',
       onboardingCompleted: true,
+      onboardingCompletedV2: true,
       biometrics: biometricsDraft,
       goals: newGoals,
       dailyJournal: {
@@ -720,6 +728,7 @@ export default function App() {
     setGoalsDraft(newGoals);
     setUserState((prev) => ({
       ...prev,
+      userName: nameDraft.trim() || prev.userName,
       biometrics: biometricsDraft,
       goals: newGoals,
     }));
@@ -732,6 +741,7 @@ export default function App() {
     setUserState((prev) => ({
       ...prev,
       userName: nameDraft.trim() || prev.userName,
+      biometrics: biometricsDraft,
       goals: {
         dailyCalories: Math.max(800, Number(goalsDraft.dailyCalories) || 2100),
         proteinGrams: Math.max(20, Number(goalsDraft.proteinGrams) || 140),
@@ -766,10 +776,12 @@ export default function App() {
   const ringStrokeDashoffset =
     ringCircumference - (caloriePercent / 100) * ringCircumference;
 
-  // FULL-SCREEN EDITORIAL ONBOARDING EXPERIENCE
+  // ============================================================================
+  // FULL-SCREEN SCIENTIFIC & ANTHROPOMETRIC ONBOARDING WIZARD
+  // ============================================================================
   if (showOnboarding) {
     return (
-      <div className="min-h-[100dvh] bg-m3-surface text-m3-cream flex flex-col justify-between max-w-md mx-auto px-5 py-7 relative overflow-hidden">
+      <div className="min-h-[100dvh] bg-m3-surface text-m3-cream flex flex-col justify-between max-w-md mx-auto px-5 py-6 relative overflow-x-hidden">
         {/* Warm Terracotta & Sunlit Peach Radial Glow */}
         <div
           className="pointer-events-none fixed inset-x-0 top-0 h-96 max-w-md mx-auto z-0"
@@ -779,10 +791,32 @@ export default function App() {
           }}
         />
 
-        {/* Top Step Progress Pills */}
-        <div className="relative z-10 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 flex-1">
-            {[0, 1, 2, 3].map((stepIdx) => (
+        {/* Top Brand Bar + Step Progress Pills */}
+        <div className="relative z-10 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <CalQuestLogoMark className="w-10 h-10" />
+              <div>
+                <span className="text-base font-display font-extrabold text-m3-cream tracking-tight block leading-none">
+                  CalQuest
+                </span>
+                <span className="text-xs font-mono text-m3-primary">
+                  Biomathematical Setup
+                </span>
+              </div>
+            </div>
+            {userState.onboardingCompletedV2 && (
+              <button
+                onClick={() => setShowOnboarding(false)}
+                className="px-3.5 py-1.5 rounded-full bg-m3-surfaceContainer text-m3-sand text-xs font-bold border border-white/[0.08]"
+              >
+                Skip
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {[0, 1, 2].map((stepIdx) => (
               <div
                 key={stepIdx}
                 className={`h-2 rounded-full transition-all duration-500 flex-1 ${
@@ -791,313 +825,297 @@ export default function App() {
               />
             ))}
           </div>
-          {userState.onboardingCompleted && (
-            <button
-              onClick={() => setShowOnboarding(false)}
-              className="ml-3 px-3.5 py-1.5 rounded-full bg-m3-surfaceContainer text-m3-sand text-xs font-bold"
-            >
-              Close
-            </button>
-          )}
         </div>
 
         {/* Step Content Area */}
-        <div className="relative z-10 my-auto py-6">
+        <div className="relative z-10 my-auto py-4">
           <AnimatePresence mode="wait">
+            {/* STEP 1: NAME, SEX, AGE, HEIGHT, WEIGHT, BODY FAT % */}
             {onboardingStep === 0 && (
               <motion.div
-                key="onboard-0"
+                key="onboard-step-0"
                 initial={{ opacity: 0, y: 18 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -14 }}
                 transition={M3_SPRING}
-                className="space-y-6"
+                className="space-y-4"
               >
-                <div className="w-16 h-16 rounded-[24px] bg-m3-primaryContainer border border-m3-primary/30 flex items-center justify-center text-m3-primary">
-                  <BookOpen className="w-8 h-8" />
-                </div>
+                <OnboardingHeroVector className="w-full h-28" />
 
                 <div>
-                  <span className="text-xs font-mono uppercase tracking-widest text-m3-primary font-semibold">
-                    Personal Metabolic Journal
+                  <span className="text-xs font-mono uppercase tracking-widest text-m3-primary font-bold">
+                    Step 1 of 3 • Personal Anthropometrics
                   </span>
-                  <h1 className="text-4xl font-display font-extrabold text-m3-cream tracking-tight mt-2 leading-[1.1]">
-                    Effortless food vision & body math.
+                  <h1 className="text-3xl font-display font-extrabold text-m3-cream tracking-tight mt-1">
+                    Tell us about yourself.
                   </h1>
-                  <p className="text-base text-m3-sand mt-3 leading-relaxed">
-                    Snap a photo of your meal, track your multi-day nutrition journal, and let peer-reviewed metabolic equations guide your daily intake.
+                  <p className="text-xs text-m3-sand mt-1 leading-relaxed">
+                    Your name, height, weight, age, and sex power the Mifflin-St Jeor (1990) & Katch-McArdle resting metabolic equations.
                   </p>
                 </div>
 
                 <div className="rounded-[32px] bg-m3-surfaceContainer border border-white/[0.08] p-5 space-y-4">
+                  {/* Name Input */}
                   <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-m3-sand mb-2">
-                      What should we call you?
+                    <label className="block text-xs font-bold uppercase tracking-wider text-m3-sand mb-1.5">
+                      Your Name
                     </label>
                     <input
                       type="text"
                       value={nameDraft}
                       onChange={(e) => setNameDraft(e.target.value)}
-                      placeholder="Your name (e.g. Akhand)"
-                      className="w-full px-5 py-4 rounded-full bg-m3-surfaceLow border border-white/[0.1] text-lg font-display font-bold text-m3-cream placeholder-m3-muted focus:outline-none focus:border-m3-primary"
+                      placeholder="Enter your name (e.g. Akhand)"
+                      className="w-full px-5 py-3.5 rounded-full bg-m3-surfaceLow border border-white/[0.1] text-base font-display font-bold text-m3-cream placeholder-m3-muted focus:outline-none focus:border-m3-primary"
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-m3-sand mb-2">
-                      Primary Direction
-                    </label>
-                    <div className="grid grid-cols-3 gap-2.5">
-                      {[
-                        {
-                          label: 'Lean Cut',
-                          sub: 'Lose fat',
-                          apply: () =>
-                            setBiometricsDraft((b) => ({
-                              ...b,
-                              targetWeightKg: Math.max(45, b.weightKg - 6),
-                            })),
-                          active: biometricsDraft.targetWeightKg < biometricsDraft.weightKg,
-                        },
-                        {
-                          label: 'Recomp',
-                          sub: 'Maintain',
-                          apply: () =>
-                            setBiometricsDraft((b) => ({
-                              ...b,
-                              targetWeightKg: b.weightKg,
-                            })),
-                          active: biometricsDraft.targetWeightKg === biometricsDraft.weightKg,
-                        },
-                        {
-                          label: 'Build',
-                          sub: 'Gain mass',
-                          apply: () =>
-                            setBiometricsDraft((b) => ({
-                              ...b,
-                              targetWeightKg: b.weightKg + 5,
-                            })),
-                          active: biometricsDraft.targetWeightKg > biometricsDraft.weightKg,
-                        },
-                      ].map((goal) => (
-                        <button
-                          key={goal.label}
-                          onClick={goal.apply}
-                          className={`p-3.5 rounded-[24px] border text-left transition-all ${
-                            goal.active
-                              ? 'bg-m3-primaryContainer border-m3-primary text-m3-cream'
-                              : 'bg-m3-surfaceLow border-white/[0.06] text-m3-sand'
-                          }`}
-                        >
-                          <p className="text-sm font-display font-bold">{goal.label}</p>
-                          <p className="text-xs text-m3-muted mt-0.5">{goal.sub}</p>
-                        </button>
-                      ))}
+                  {/* Biological Sex & Resistance Training */}
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-m3-sand mb-1.5">
+                        Biological Sex
+                      </label>
+                      <div className="p-1 rounded-full bg-m3-surfaceLow border border-white/[0.08] grid grid-cols-2">
+                        {(['male', 'female'] as const).map((sex) => (
+                          <button
+                            key={sex}
+                            type="button"
+                            onClick={() => setBiometricsDraft((b) => ({ ...b, sex }))}
+                            className={`py-2 rounded-full text-xs font-display font-extrabold capitalize transition-all ${
+                              biometricsDraft.sex === sex
+                                ? 'bg-m3-primary text-m3-surface'
+                                : 'text-m3-sand'
+                            }`}
+                          >
+                            {sex}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-m3-sand mb-1.5">
+                        Age (Years)
+                      </label>
+                      <input
+                        type="number"
+                        min="14"
+                        max="100"
+                        value={biometricsDraft.age}
+                        onChange={(e) =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            age: Number(e.target.value) || 24,
+                          }))
+                        }
+                        className="w-full px-4 py-2.5 rounded-full bg-m3-surfaceLow border border-white/[0.1] text-lg font-mono tabular-nums font-extrabold text-m3-cream text-center"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Height, Current Weight, Optional Body Fat % */}
+                  <div className="grid grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block text-xs font-bold text-m3-sand mb-1">
+                        Height (cm)
+                      </label>
+                      <input
+                        type="number"
+                        min="120"
+                        max="230"
+                        value={biometricsDraft.heightCm}
+                        onChange={(e) =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            heightCm: Number(e.target.value) || 175,
+                          }))
+                        }
+                        className="w-full px-3 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.1] text-lg font-mono tabular-nums font-extrabold text-m3-cream text-center"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-m3-sand mb-1">
+                        Weight (kg)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="35"
+                        max="250"
+                        value={biometricsDraft.weightKg}
+                        onChange={(e) =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            weightKg: Number(e.target.value) || 75,
+                          }))
+                        }
+                        className="w-full px-3 py-3 rounded-[20px] bg-m3-surfaceLow border border-m3-primary/40 text-lg font-mono tabular-nums font-extrabold text-m3-primary text-center"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-m3-sand mb-1">
+                        Body Fat %
+                      </label>
+                      <input
+                        type="number"
+                        placeholder={`~${metabolicResult.estimatedBodyFatPct}%`}
+                        value={biometricsDraft.bodyFatPct ?? ''}
+                        onChange={(e) =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            bodyFatPct: e.target.value ? Number(e.target.value) : undefined,
+                          }))
+                        }
+                        className="w-full px-3 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.1] text-base font-mono tabular-nums font-bold text-m3-cream placeholder-m3-muted text-center"
+                      />
                     </div>
                   </div>
                 </div>
               </motion.div>
             )}
 
+            {/* STEP 2: GOAL WEIGHT, TIMELINE, RESISTANCE TRAINING & ACTIVITY MULTIPLIER */}
             {onboardingStep === 1 && (
               <motion.div
-                key="onboard-1"
+                key="onboard-step-1"
                 initial={{ opacity: 0, y: 18 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -14 }}
                 transition={M3_SPRING}
-                className="space-y-5"
+                className="space-y-4"
               >
                 <div>
-                  <span className="text-xs font-mono uppercase tracking-widest text-m3-primary font-semibold">
-                    Step 2 of 4 • Biometrics
+                  <span className="text-xs font-mono uppercase tracking-widest text-m3-primary font-bold">
+                    Step 2 of 3 • Goal & Activity Multiplier
                   </span>
                   <h1 className="text-3xl font-display font-extrabold text-m3-cream tracking-tight mt-1">
-                    Calibrate your body metrics.
+                    Set your target trajectory.
                   </h1>
-                  <p className="text-sm text-m3-sand mt-1">
-                    Used by the Mifflin-St Jeor, Forbes, and Hall equations to compute your exact energy expenditure.
+                  <p className="text-xs text-m3-sand mt-1">
+                    Forbes (1987) & Hall (Lancet 2011) calculate tissue mobilization and dynamic adaptation across your timeline.
                   </p>
                 </div>
 
-                {/* Sex & Lifting Pills */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-1.5 rounded-full bg-m3-surfaceContainer border border-white/[0.08] grid grid-cols-2">
-                    {(['male', 'female'] as const).map((sex) => (
+                {/* Target Weight & Timeline */}
+                <div className="rounded-[32px] bg-m3-surfaceContainer border border-white/[0.08] p-5 space-y-4">
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      {
+                        label: 'Lean Cut',
+                        desc: '-6 kg',
+                        onClick: () =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            targetWeightKg: Math.max(45, Math.round((b.weightKg - 6) * 2) / 2),
+                          })),
+                        active: biometricsDraft.targetWeightKg < biometricsDraft.weightKg,
+                      },
+                      {
+                        label: 'Recomp',
+                        desc: 'Maintain',
+                        onClick: () =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            targetWeightKg: b.weightKg,
+                          })),
+                        active: biometricsDraft.targetWeightKg === biometricsDraft.weightKg,
+                      },
+                      {
+                        label: 'Lean Build',
+                        desc: '+5 kg',
+                        onClick: () =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            targetWeightKg: Math.round((b.weightKg + 5) * 2) / 2,
+                          })),
+                        active: biometricsDraft.targetWeightKg > biometricsDraft.weightKg,
+                      },
+                    ].map((preset) => (
                       <button
-                        key={sex}
-                        onClick={() => setBiometricsDraft((b) => ({ ...b, sex }))}
-                        className={`py-2.5 rounded-full text-sm font-display font-bold capitalize transition-all ${
-                          biometricsDraft.sex === sex
-                            ? 'bg-m3-primary text-m3-surface'
-                            : 'text-m3-sand'
+                        key={preset.label}
+                        type="button"
+                        onClick={preset.onClick}
+                        className={`p-3 rounded-[22px] border text-center transition-all ${
+                          preset.active
+                            ? 'bg-m3-primaryContainer border-m3-primary text-m3-cream'
+                            : 'bg-m3-surfaceLow border-white/[0.06] text-m3-sand'
                         }`}
                       >
-                        {sex}
+                        <p className="text-xs font-display font-extrabold">{preset.label}</p>
+                        <p className="text-xs font-mono text-m3-primary mt-0.5">{preset.desc}</p>
                       </button>
                     ))}
                   </div>
 
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-m3-sand mb-1">
+                        Target Weight (kg)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={biometricsDraft.targetWeightKg}
+                        onChange={(e) =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            targetWeightKg: Number(e.target.value) || b.weightKg,
+                          }))
+                        }
+                        className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-m3-primary/40 text-xl font-mono tabular-nums font-extrabold text-m3-primary text-center"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-m3-sand mb-1">
+                        Timeline (weeks)
+                      </label>
+                      <input
+                        type="number"
+                        min="2"
+                        max="104"
+                        value={biometricsDraft.targetTimelineWeeks}
+                        onChange={(e) =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            targetTimelineWeeks: Math.max(2, Number(e.target.value) || 12),
+                          }))
+                        }
+                        className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.1] text-xl font-mono tabular-nums font-extrabold text-m3-cream text-center"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Resistance Training Toggle */}
                   <button
+                    type="button"
                     onClick={() =>
                       setBiometricsDraft((b) => ({
                         ...b,
                         resistanceTraining: !b.resistanceTraining,
                       }))
                     }
-                    className={`px-4 py-2.5 rounded-full border text-sm font-display font-bold flex items-center justify-center gap-2 transition-all ${
+                    className={`w-full px-4 py-3 rounded-full border text-xs font-display font-extrabold flex items-center justify-between transition-all ${
                       biometricsDraft.resistanceTraining
                         ? 'bg-m3-primaryContainer border-m3-primary text-m3-onPrimaryContainer'
-                        : 'bg-m3-surfaceContainer border-white/[0.08] text-m3-sand'
+                        : 'bg-m3-surfaceLow border-white/[0.08] text-m3-sand'
                     }`}
                   >
-                    <Dumbbell className="w-4 h-4" />
-                    <span>Lifting: {biometricsDraft.resistanceTraining ? 'Yes' : 'No'}</span>
+                    <span className="flex items-center gap-2">
+                      <Dumbbell className="w-4 h-4 text-m3-primary" />
+                      <span>Resistance Training (Preserves Lean Mass)</span>
+                    </span>
+                    <span className="font-mono uppercase">
+                      {biometricsDraft.resistanceTraining ? 'Active' : 'Off'}
+                    </span>
                   </button>
                 </div>
 
-                <div className="rounded-[34px] bg-m3-surfaceContainer border border-white/[0.08] p-5 grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-m3-sand mb-1.5">
-                      Age (years)
-                    </label>
-                    <input
-                      type="number"
-                      value={biometricsDraft.age}
-                      onChange={(e) =>
-                        setBiometricsDraft((b) => ({
-                          ...b,
-                          age: Number(e.target.value) || 24,
-                        }))
-                      }
-                      className="w-full px-4 py-3.5 rounded-[22px] bg-m3-surfaceLow border border-white/[0.08] text-2xl font-mono tabular-nums font-bold text-m3-cream"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-m3-sand mb-1.5">
-                      Height (cm)
-                    </label>
-                    <input
-                      type="number"
-                      value={biometricsDraft.heightCm}
-                      onChange={(e) =>
-                        setBiometricsDraft((b) => ({
-                          ...b,
-                          heightCm: Number(e.target.value) || 175,
-                        }))
-                      }
-                      className="w-full px-4 py-3.5 rounded-[22px] bg-m3-surfaceLow border border-white/[0.08] text-2xl font-mono tabular-nums font-bold text-m3-cream"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-m3-sand mb-1.5">
-                      Current Weight (kg)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      value={biometricsDraft.weightKg}
-                      onChange={(e) =>
-                        setBiometricsDraft((b) => ({
-                          ...b,
-                          weightKg: Number(e.target.value) || 75,
-                        }))
-                      }
-                      className="w-full px-4 py-3.5 rounded-[22px] bg-m3-surfaceLow border border-white/[0.08] text-2xl font-mono tabular-nums font-bold text-m3-cream"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-m3-sand mb-1.5">
-                      Target Weight (kg)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      value={biometricsDraft.targetWeightKg}
-                      onChange={(e) =>
-                        setBiometricsDraft((b) => ({
-                          ...b,
-                          targetWeightKg: Number(e.target.value) || 70,
-                        }))
-                      }
-                      className="w-full px-4 py-3.5 rounded-[22px] bg-m3-surfaceLow border border-m3-primary/40 text-2xl font-mono tabular-nums font-bold text-m3-primary"
-                    />
-                  </div>
-                  <div className="col-span-2">
-                    <div className="flex justify-between text-xs font-semibold text-m3-sand mb-1.5">
-                      <span>Target Timeline</span>
-                      <span className="font-mono tabular-nums text-m3-primary font-bold">
-                        {biometricsDraft.targetTimelineWeeks} weeks
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min="4"
-                      max="52"
-                      value={biometricsDraft.targetTimelineWeeks}
-                      onChange={(e) =>
-                        setBiometricsDraft((b) => ({
-                          ...b,
-                          targetTimelineWeeks: Number(e.target.value) || 12,
-                        }))
-                      }
-                      className="w-full accent-[#F4845F]"
-                    />
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {onboardingStep === 2 && (
-              <motion.div
-                key="onboard-2"
-                initial={{ opacity: 0, y: 18 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -14 }}
-                transition={M3_SPRING}
-                className="space-y-5"
-              >
-                <div>
-                  <span className="text-xs font-mono uppercase tracking-widest text-m3-primary font-semibold">
-                    Step 3 of 4 • Scientific Prescription
-                  </span>
-                  <h1 className="text-3xl font-display font-extrabold text-m3-cream tracking-tight mt-1">
-                    Your daily energy target.
-                  </h1>
-                </div>
-
-                {/* Big Texted Scientific Prescription Hero Card */}
-                <div className="rounded-[36px] bg-m3-primaryContainer border border-m3-primary/35 p-6 text-center space-y-3">
-                  <span className="text-xs font-mono uppercase tracking-widest text-m3-onPrimaryContainer/80 block">
-                    Hall (Lancet 2011) Optimal Intake
-                  </span>
-                  <div className="flex items-baseline justify-center gap-2">
-                    <span className="text-5xl font-mono tabular-nums font-extrabold text-m3-cream">
-                      {metabolicResult.targetDailyCalories}
-                    </span>
-                    <span className="text-base font-mono text-m3-onPrimaryContainer">kcal/day</span>
-                  </div>
-                  <div className="grid grid-cols-4 gap-2 pt-2">
-                    {[
-                      { label: 'Protein', val: `${metabolicResult.recommendedMacros.proteinGrams}g` },
-                      { label: 'Carbs', val: `${metabolicResult.recommendedMacros.carbsGrams}g` },
-                      { label: 'Fat', val: `${metabolicResult.recommendedMacros.fatGrams}g` },
-                      { label: 'Fiber', val: `${metabolicResult.recommendedMacros.fiberGrams}g` },
-                    ].map((m) => (
-                      <div key={m.label} className="p-2.5 rounded-2xl bg-black/25">
-                        <span className="text-xs text-m3-onPrimaryContainer/70 block">{m.label}</span>
-                        <span className="text-base font-mono tabular-nums font-bold text-m3-cream">
-                          {m.val}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Activity Level Selector */}
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold uppercase tracking-wider text-m3-sand">
-                    Select Daily Activity Level
+                {/* Activity Level List */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-m3-sand px-1">
+                    Physical Activity Level (PAL Multiplier)
                   </label>
                   {(
                     Object.keys(ACTIVITY_LABELS) as Array<BiometricsProfile['activityLevel']>
@@ -1107,20 +1125,21 @@ export default function App() {
                     return (
                       <button
                         key={levelKey}
+                        type="button"
                         onClick={() =>
                           setBiometricsDraft((b) => ({ ...b, activityLevel: levelKey }))
                         }
-                        className={`w-full px-4 py-3 rounded-[24px] border text-left flex items-center justify-between transition-all ${
+                        className={`w-full px-4 py-2.5 rounded-[22px] border text-left flex items-center justify-between transition-all ${
                           active
                             ? 'bg-m3-surfaceHigh border-m3-primary text-m3-cream'
                             : 'bg-m3-surfaceContainer border-white/[0.06] text-m3-sand'
                         }`}
                       >
                         <div>
-                          <p className="text-sm font-display font-bold">{item.label}</p>
+                          <p className="text-xs font-display font-extrabold">{item.label}</p>
                           <p className="text-xs text-m3-muted">{item.desc}</p>
                         </div>
-                        <span className="text-sm font-mono tabular-nums text-m3-primary font-bold">
+                        <span className="text-xs font-mono tabular-nums text-m3-primary font-extrabold">
                           ×{item.pal.toFixed(2)}
                         </span>
                       </button>
@@ -1130,80 +1149,107 @@ export default function App() {
               </motion.div>
             )}
 
-            {onboardingStep === 3 && (
+            {/* STEP 3: MATHEMATICAL & SCIENTIFIC RESULT + OPTIONAL API KEY */}
+            {onboardingStep === 2 && (
               <motion.div
-                key="onboard-3"
+                key="onboard-step-2"
                 initial={{ opacity: 0, y: 18 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -14 }}
                 transition={M3_SPRING}
-                className="space-y-5"
+                className="space-y-4"
               >
-                <div className="w-16 h-16 rounded-[24px] bg-m3-primaryContainer border border-m3-primary/30 flex items-center justify-center text-m3-primary">
-                  <KeyRound className="w-8 h-8" />
-                </div>
-
                 <div>
-                  <span className="text-xs font-mono uppercase tracking-widest text-m3-primary font-semibold">
-                    Step 4 of 4 • Multimodal Vision
+                  <span className="text-xs font-mono uppercase tracking-widest text-m3-primary font-bold">
+                    Step 3 of 3 • Mathematical Prescription
                   </span>
-                  <h1 className="text-3xl font-display font-extrabold text-m3-cream tracking-tight mt-1">
-                    Connect your Gemini API Key.
+                  <h1 className="text-2xl font-display font-extrabold text-m3-cream tracking-tight mt-0.5">
+                    {nameDraft.trim() ? `${nameDraft.trim()}'s` : 'Your'} Scientific Intake
                   </h1>
-                  <p className="text-sm text-m3-sand mt-2 leading-relaxed">
-                    Paste your Google AI Studio key so meal photos are analyzed with automatic multi-model 503 failover. Your journal is saved locally in IndexedDB + LocalStorage.
-                  </p>
                 </div>
 
-                <div className="rounded-[34px] bg-m3-surfaceContainer border border-white/[0.08] p-5 space-y-4">
+                {/* Big Texted Scientific Prescription Card */}
+                <div className="rounded-[34px] bg-m3-primaryContainer border border-m3-primary/40 p-5 text-center space-y-3">
+                  <span className="text-xs font-mono uppercase tracking-widest text-m3-onPrimaryContainer/80 block">
+                    Hall (Lancet 2011) + Forbes (1987) Daily Target
+                  </span>
+                  <div className="flex items-baseline justify-center gap-2">
+                    <span className="text-5xl font-mono tabular-nums font-extrabold text-m3-cream">
+                      {metabolicResult.targetDailyCalories}
+                    </span>
+                    <span className="text-sm font-mono text-m3-onPrimaryContainer">kcal / day</span>
+                  </div>
+                  <p className="text-xs font-mono text-m3-onPrimaryContainer/90">
+                    {metabolicResult.dailyCalorieDelta === 0
+                      ? `Isocaloric Maintenance (${metabolicResult.tdee} kcal TDEE)`
+                      : `${metabolicResult.dailyCalorieDelta > 0 ? '+' : ''}${
+                          metabolicResult.dailyCalorieDelta
+                        } kcal/d delta • ${metabolicResult.weeklyRateKg} kg/week`}
+                  </p>
+
+                  <div className="grid grid-cols-4 gap-2 pt-1">
+                    {[
+                      { label: 'Protein', val: `${metabolicResult.recommendedMacros.proteinGrams}g` },
+                      { label: 'Carbs', val: `${metabolicResult.recommendedMacros.carbsGrams}g` },
+                      { label: 'Fat', val: `${metabolicResult.recommendedMacros.fatGrams}g` },
+                      { label: 'Fiber', val: `${metabolicResult.recommendedMacros.fiberGrams}g` },
+                    ].map((m) => (
+                      <div key={m.label} className="p-2.5 rounded-2xl bg-black/25">
+                        <span className="text-xs text-m3-onPrimaryContainer/70 block">{m.label}</span>
+                        <span className="text-sm font-mono tabular-nums font-extrabold text-m3-cream">
+                          {m.val}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Mathematical Breakdown Ledger + Vector Curve */}
+                <div className="rounded-[30px] bg-m3-surfaceContainer border border-white/[0.08] p-4 space-y-3">
+                  <MetabolicEquationVector className="w-full h-20" />
+                  <div className="rounded-2xl bg-m3-surfaceLow border border-white/[0.06] divide-y divide-white/[0.06] text-xs">
+                    <div className="px-3.5 py-2 flex justify-between">
+                      <span className="text-m3-sand">Mifflin-St Jeor / Katch RMR</span>
+                      <span className="font-mono tabular-nums font-bold text-m3-cream">
+                        {metabolicResult.activeRmr} kcal/d
+                      </span>
+                    </div>
+                    <div className="px-3.5 py-2 flex justify-between">
+                      <span className="text-m3-sand">
+                        Maintenance TDEE (×{metabolicResult.pal.toFixed(2)})
+                      </span>
+                      <span className="font-mono tabular-nums font-bold text-m3-amber">
+                        {metabolicResult.tdee} kcal/d
+                      </span>
+                    </div>
+                    <div className="px-3.5 py-2 flex justify-between">
+                      <span className="text-m3-sand">Forbes Partitioning (p) & Density</span>
+                      <span className="font-mono tabular-nums font-bold text-m3-primarySoft">
+                        {metabolicResult.effectiveEnergyDensityKcalPerKg} kcal/kg
+                      </span>
+                    </div>
+                    <div className="px-3.5 py-2 flex justify-between">
+                      <span className="text-m3-sand">Hall Adaptation (ε = 22 kcal/kg/d)</span>
+                      <span className="font-mono tabular-nums font-bold text-m3-sage">
+                        {metabolicResult.metabolicAdaptationKcal >= 0 ? '+' : ''}
+                        {metabolicResult.metabolicAdaptationKcal} kcal/d
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Optional API Key Quick Input */}
+                <div className="rounded-[28px] bg-m3-surfaceContainer border border-white/[0.08] p-4 space-y-2.5">
+                  <label className="block text-xs font-bold text-m3-sand">
+                    Gemini Vision API Key (Optional — can also set in Settings)
+                  </label>
                   <input
                     type="password"
                     value={apiKeyInput}
                     onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder="Paste AIzaSy... key (or skip for now)"
-                    className="w-full px-5 py-4 rounded-full bg-m3-surfaceLow border border-white/[0.1] text-sm font-mono text-m3-cream placeholder-m3-muted focus:outline-none focus:border-m3-primary"
+                    placeholder="Paste AIzaSy... key for meal photo analysis"
+                    className="w-full px-4 py-3 rounded-full bg-m3-surfaceLow border border-white/[0.1] text-xs font-mono text-m3-cream placeholder-m3-muted focus:outline-none focus:border-m3-primary"
                   />
-
-                  <button
-                    type="button"
-                    onClick={handleTestApiConnection}
-                    disabled={testingApi || !apiKeyInput.trim()}
-                    className="w-full py-3.5 px-5 rounded-full bg-m3-surfaceHigh hover:bg-m3-surfaceHighest disabled:opacity-50 border border-white/[0.08] text-sm font-display font-bold text-m3-cream flex items-center justify-center gap-2"
-                  >
-                    {testingApi ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin text-m3-primary" />
-                        Verifying Key...
-                      </>
-                    ) : (
-                      <>
-                        <Wifi className="w-4 h-4 text-m3-primary" />
-                        Test API Connection
-                      </>
-                    )}
-                  </button>
-
-                  {apiTestResult && (
-                    <div
-                      className={`p-3.5 rounded-[22px] border text-xs flex items-start gap-2.5 ${
-                        apiTestResult.ok
-                          ? 'bg-m3-sage/15 border-m3-sage/40 text-m3-cream'
-                          : 'bg-m3-rose/15 border-m3-rose/40 text-m3-cream'
-                      }`}
-                    >
-                      {apiTestResult.ok ? (
-                        <CheckCircle2 className="w-4 h-4 text-m3-sage shrink-0 mt-0.5" />
-                      ) : (
-                        <AlertCircle className="w-4 h-4 text-m3-rose shrink-0 mt-0.5" />
-                      )}
-                      <div>
-                        <p className="font-display font-bold">
-                          {apiTestResult.ok ? 'Connected' : 'Connection Issue'}
-                        </p>
-                        <p className="font-mono mt-0.5 opacity-90">{apiTestResult.message}</p>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </motion.div>
             )}
@@ -1214,6 +1260,7 @@ export default function App() {
         <div className="relative z-10 flex items-center gap-3 pt-2">
           {onboardingStep > 0 && (
             <button
+              type="button"
               onClick={() => setOnboardingStep((s) => s - 1)}
               className="p-4 rounded-full bg-m3-surfaceContainer border border-white/[0.08] text-m3-cream active:scale-95 transition-transform"
             >
@@ -1221,8 +1268,9 @@ export default function App() {
             </button>
           )}
 
-          {onboardingStep < 3 ? (
+          {onboardingStep < 2 ? (
             <button
+              type="button"
               onClick={() => setOnboardingStep((s) => s + 1)}
               className="flex-1 py-4 px-6 rounded-full bg-m3-primary hover:bg-m3-primarySoft text-m3-surface font-display font-extrabold text-base flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
             >
@@ -1231,11 +1279,12 @@ export default function App() {
             </button>
           ) : (
             <button
+              type="button"
               onClick={handleFinishOnboarding}
               className="flex-1 py-4 px-6 rounded-full bg-m3-primary hover:bg-m3-primarySoft text-m3-surface font-display font-extrabold text-base flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
             >
               <Check className="w-5 h-5 stroke-[2.5]" />
-              <span>Start My Journal</span>
+              <span>Save Target & Start Journal</span>
             </button>
           )}
         </div>
@@ -1254,13 +1303,11 @@ export default function App() {
         }}
       />
 
-      {/* TOP WARM MATERIAL 3 EXPRESSIVE APP BAR */}
+      {/* TOP WARM MATERIAL 3 EXPRESSIVE APP BAR WITH BRAND LOGO */}
       <header className="sticky top-0 z-30 backdrop-blur-2xl bg-m3-surface/85 border-b border-white/[0.06] px-4 pt-3.5 pb-3.5">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-[22px] bg-m3-primaryContainer border border-m3-primary/30 flex items-center justify-center text-m3-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-              <RenderVectorIcon name={levelInfo.rankIcon} className="w-6 h-6" />
-            </div>
+            <CalQuestLogoMark className="w-12 h-12 shrink-0" />
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-mono tabular-nums uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-m3-primaryContainer text-m3-onPrimaryContainer border border-m3-primary/25 font-bold">
@@ -1319,7 +1366,7 @@ export default function App() {
                   Add Vision API Key
                 </p>
                 <p className="text-xs text-m3-sand">
-                  Connect your key in Config for instant photo calorie scans.
+                  Connect your key in Settings for instant photo calorie scans.
                 </p>
               </div>
             </div>
@@ -1333,7 +1380,7 @@ export default function App() {
         )}
 
         <AnimatePresence mode="wait">
-          {/* TAB 1: TODAY DASHBOARD (BIG TEXTED, SMOOTH ROUND TERRACOTTA SUITE) */}
+          {/* TAB 1: TODAY DASHBOARD */}
           {activeTab === 'dashboard' && (
             <motion.div
               key="dashboard"
@@ -1355,11 +1402,11 @@ export default function App() {
                     </h1>
                   </div>
                   <button
-                    onClick={() => setActiveTab('journal')}
-                    className="inline-flex items-center gap-1.5 text-xs font-display font-bold px-4 py-2 rounded-full bg-m3-surfaceHigh hover:bg-m3-surfaceHighest text-m3-cream border border-white/[0.08] active:scale-95 transition-all"
+                    onClick={() => setActiveTab('settings')}
+                    className="inline-flex items-center gap-1.5 text-xs font-display font-bold px-3.5 py-2 rounded-full bg-m3-surfaceHigh hover:bg-m3-surfaceHighest text-m3-cream border border-white/[0.08] active:scale-95 transition-all"
                   >
-                    <BookOpen className="w-4 h-4 text-m3-primary" />
-                    <span>Journal</span>
+                    <Calculator className="w-3.5 h-3.5 text-m3-primary" />
+                    <span>Body Math</span>
                   </button>
                 </div>
 
@@ -1512,7 +1559,7 @@ export default function App() {
                 </div>
               </motion.button>
 
-              {/* TODAY'S MEAL TIMELINE */}
+              {/* TODAY'S MEAL TIMELINE WITH CUSTOM VECTOR EMPTY STATE */}
               <section className="space-y-3">
                 <div className="flex items-center justify-between px-1">
                   <h2 className="text-lg font-display font-extrabold text-m3-cream">
@@ -1522,15 +1569,13 @@ export default function App() {
                     onClick={() => setActiveTab('journal')}
                     className="text-xs font-display font-bold text-m3-primary hover:underline"
                   >
-                    Past Days History
+                    Past Days Journal
                   </button>
                 </div>
 
                 {todayMeals.length === 0 ? (
-                  <div className="rounded-[34px] bg-m3-surfaceContainer border border-white/[0.07] p-8 text-center">
-                    <div className="w-14 h-14 rounded-full bg-m3-surfaceHigh border border-white/[0.08] flex items-center justify-center mx-auto mb-3 text-m3-primary">
-                      <Utensils className="w-6 h-6" />
-                    </div>
+                  <div className="rounded-[34px] bg-m3-surfaceContainer border border-white/[0.07] p-7 text-center">
+                    <EmptyPlateVector className="w-28 h-24 mx-auto mb-2" />
                     <p className="text-base font-display font-bold text-m3-cream">
                       Your plate journal is empty today
                     </p>
@@ -1865,46 +1910,6 @@ export default function App() {
                   ))
                 )}
               </section>
-
-              {/* JOURNAL BACKUP & RESTORE CARD */}
-              <section className="rounded-[32px] bg-m3-surfaceContainer border border-white/[0.08] p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-display font-extrabold text-m3-cream">
-                      Journal Backup & Restore
-                    </h3>
-                    <p className="text-xs text-m3-sand">
-                      Auto-saved to IndexedDB. Export a portable `.json` copy anytime.
-                    </p>
-                  </div>
-                </div>
-                <input
-                  ref={backupFileInputRef}
-                  type="file"
-                  accept="application/json,.json"
-                  onChange={handleImportBackupFile}
-                  className="hidden"
-                />
-                <div className="grid grid-cols-2 gap-2.5">
-                  <button
-                    onClick={handleExportBackup}
-                    className="py-3 px-4 rounded-full bg-m3-surfaceHigh hover:bg-m3-surfaceHighest text-m3-cream text-xs font-display font-bold flex items-center justify-center gap-2 border border-white/[0.08]"
-                  >
-                    <Download className="w-4 h-4 text-m3-primary" />
-                    <span>Export Backup</span>
-                  </button>
-                  <button
-                    onClick={() => backupFileInputRef.current?.click()}
-                    className="py-3 px-4 rounded-full bg-m3-surfaceHigh hover:bg-m3-surfaceHighest text-m3-cream text-xs font-display font-bold flex items-center justify-center gap-2 border border-white/[0.08]"
-                  >
-                    <Upload className="w-4 h-4 text-m3-amber" />
-                    <span>Restore File</span>
-                  </button>
-                </div>
-                {backupToast && (
-                  <p className="text-xs text-m3-primary font-bold text-center">{backupToast}</p>
-                )}
-              </section>
             </motion.div>
           )}
 
@@ -1964,12 +1969,10 @@ export default function App() {
                   })}
                 </div>
 
-                {/* Camera / Image Preview Frame */}
+                {/* Camera / Image Preview Frame with Bespoke Vector Illustration */}
                 {!capturedPhotoUrl ? (
-                  <div className="mt-5 border border-dashed border-white/[0.15] rounded-[32px] p-8 text-center bg-m3-surfaceLow">
-                    <div className="w-16 h-16 rounded-full bg-m3-primaryContainer border border-m3-primary/30 flex items-center justify-center mx-auto mb-3 text-m3-primary">
-                      <Camera className="w-7 h-7" />
-                    </div>
+                  <div className="mt-5 border border-dashed border-white/[0.15] rounded-[32px] p-7 text-center bg-m3-surfaceLow">
+                    <ScannerViewfinderVector className="w-28 h-24 mx-auto mb-2" />
                     <p className="text-lg font-display font-extrabold text-m3-cream mb-1">
                       Capture Your Meal
                     </p>
@@ -2091,12 +2094,10 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Nutritionist Feedback */}
                   <div className="p-4 rounded-[24px] bg-m3-surfaceLow border border-white/[0.06] text-xs text-m3-sand leading-relaxed">
                     {analysisResult.wittyFeedback}
                   </div>
 
-                  {/* Macro Summary Strip */}
                   <div className="grid grid-cols-4 gap-2.5">
                     {[
                       {
@@ -2132,7 +2133,6 @@ export default function App() {
                     ))}
                   </div>
 
-                  {/* Portion Multiplier Control */}
                   <div className="p-4 rounded-[24px] bg-m3-surfaceLow border border-white/[0.05]">
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-m3-sand font-bold">Portion Scale</span>
@@ -2151,7 +2151,6 @@ export default function App() {
                     />
                   </div>
 
-                  {/* Itemized Food Components Ledger */}
                   <div>
                     <p className="text-xs font-display font-bold uppercase tracking-wider text-m3-sand mb-2">
                       Detected Plate Items (Tap to toggle)
@@ -2214,291 +2213,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* TAB 4: SCIENTIFIC BODY MATH CALCULATOR */}
-          {activeTab === 'math' && (
-            <motion.div
-              key="math"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={M3_SPRING}
-              className="space-y-4"
-            >
-              <div className="rounded-[36px] bg-m3-surfaceContainer border border-white/[0.08] p-6">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <span className="text-xs font-mono uppercase tracking-widest text-m3-primary font-semibold block">
-                      Hall (Lancet 2011) + Forbes (1987)
-                    </span>
-                    <h1 className="text-2xl font-display font-extrabold text-m3-cream tracking-tight mt-0.5">
-                      Body Math Engine
-                    </h1>
-                  </div>
-                  <button
-                    onClick={() => setShowFormulaSheet((v) => !v)}
-                    className="px-3.5 py-2 rounded-full bg-m3-surfaceHigh text-m3-cream border border-white/[0.08] text-xs font-bold flex items-center gap-1.5"
-                  >
-                    <Info className="w-4 h-4 text-m3-primary" />
-                    {showFormulaSheet ? 'Hide' : 'Equations'}
-                  </button>
-                </div>
-
-                {/* Big Texted Computed Intake Banner */}
-                <div className="mt-5 p-5 rounded-[30px] bg-m3-primaryContainer border border-m3-primary/35 flex items-center justify-between gap-3">
-                  <div>
-                    <span className="text-xs font-mono uppercase tracking-wider text-m3-onPrimaryContainer/80 block">
-                      Scientific Daily Target
-                    </span>
-                    <div className="flex items-baseline gap-1.5 mt-1">
-                      <span className="text-4xl font-mono tabular-nums font-extrabold text-m3-cream">
-                        {metabolicResult.targetDailyCalories}
-                      </span>
-                      <span className="text-xs font-mono text-m3-onPrimaryContainer">kcal/d</span>
-                    </div>
-                    <span className="text-xs font-mono tabular-nums text-m3-onPrimaryContainer/90 mt-1 block">
-                      {metabolicResult.dailyCalorieDelta === 0
-                        ? 'Maintenance'
-                        : `${metabolicResult.dailyCalorieDelta > 0 ? '+' : ''}${
-                            metabolicResult.dailyCalorieDelta
-                          } kcal/d (${metabolicResult.weeklyRateKg} kg/wk)`}
-                    </span>
-                  </div>
-
-                  <button
-                    onClick={handleApplyScientificTargets}
-                    className="px-5 py-3.5 rounded-full bg-m3-primary hover:bg-m3-primarySoft text-m3-surface font-display font-extrabold text-xs shrink-0 active:scale-95 transition-all"
-                  >
-                    Apply Target
-                  </button>
-                </div>
-
-                {mathAppliedToast && (
-                  <div className="mt-3 px-4 py-2.5 rounded-full bg-m3-primaryContainer border border-m3-primary/40 text-m3-onPrimaryContainer text-xs font-bold flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-m3-primary shrink-0" />
-                    <span>Daily calorie & macro targets applied to your journal.</span>
-                  </div>
-                )}
-
-                {/* Divide-Y Scientific Parameters Ledger */}
-                <div className="mt-4 rounded-[26px] bg-m3-surfaceLow border border-white/[0.06] divide-y divide-white/[0.06] overflow-hidden text-xs">
-                  <div className="px-4 py-3 flex items-center justify-between">
-                    <span className="text-m3-sand">Resting Metabolic Rate (RMR)</span>
-                    <span className="font-mono tabular-nums text-m3-cream font-bold text-sm">
-                      {metabolicResult.activeRmr} kcal/d
-                    </span>
-                  </div>
-                  <div className="px-4 py-3 flex items-center justify-between">
-                    <span className="text-m3-sand">
-                      Maintenance TDEE (PAL ×{metabolicResult.pal.toFixed(2)})
-                    </span>
-                    <span className="font-mono tabular-nums text-m3-amber font-bold text-sm">
-                      {metabolicResult.tdee} kcal/d
-                    </span>
-                  </div>
-                  <div className="px-4 py-3 flex items-center justify-between">
-                    <span className="text-m3-sand">Forbes Lean Partitioning (p)</span>
-                    <span className="font-mono tabular-nums text-m3-cream font-semibold">
-                      {(metabolicResult.forbesPartitionP * 100).toFixed(1)}% LBM /{' '}
-                      {((1 - metabolicResult.forbesPartitionP) * 100).toFixed(1)}% FM
-                    </span>
-                  </div>
-                  <div className="px-4 py-3 flex items-center justify-between">
-                    <span className="text-m3-sand">Effective Energy Density (ρ_eff)</span>
-                    <span className="font-mono tabular-nums text-m3-primarySoft font-bold">
-                      {metabolicResult.effectiveEnergyDensityKcalPerKg} kcal/kg
-                    </span>
-                  </div>
-                  <div className="px-4 py-3 flex items-center justify-between">
-                    <span className="text-m3-sand">Hall Adaptation (ε = 22)</span>
-                    <span className="font-mono tabular-nums text-m3-cream font-semibold">
-                      {metabolicResult.metabolicAdaptationKcal >= 0 ? '+' : ''}
-                      {metabolicResult.metabolicAdaptationKcal} kcal/d
-                    </span>
-                  </div>
-                </div>
-
-                {/* Collapsible Research Paper Reference Sheet */}
-                <AnimatePresence>
-                  {showFormulaSheet && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="mt-4 p-4 rounded-[24px] bg-m3-surfaceLow border border-white/[0.07] space-y-2.5 text-xs text-m3-sand leading-relaxed">
-                        <p className="font-display font-bold text-m3-primary">
-                          Peer-Reviewed Biomathematical Formulation
-                        </p>
-                        <p>
-                          <strong className="text-m3-cream">1. Basal Expenditure:</strong>{' '}
-                          Mifflin-St Jeor (1990) & Katch-McArdle (1973):
-                          <span className="block font-mono text-m3-muted mt-0.5">
-                            RMR = 10W + 6.25H - 5A + s | RMR_LBM = 370 + 21.6(LBM)
-                          </span>
-                        </p>
-                        <p>
-                          <strong className="text-m3-cream">2. Forbes Partitioning (1987):</strong>{' '}
-                          Fraction of weight change from lean vs adipose tissue:
-                          <span className="block font-mono text-m3-muted mt-0.5">
-                            p = C / (C + FM), C = 10.4 * (rho_L / rho_F) = 1.996 kg
-                          </span>
-                        </p>
-                        <p>
-                          <strong className="text-m3-cream">
-                            3. Hall et al. (The Lancet, 2011):
-                          </strong>{' '}
-                          Dynamic adaptation (ε = 22 kcal/kg/d):
-                          <span className="block font-mono text-m3-muted mt-0.5">
-                            Delta_E = [rho_eff * (Delta_W / t)] + [0.5 * 22 * Delta_W]
-                          </span>
-                        </p>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
-              {/* Biometric Input Controls */}
-              <div className="rounded-[36px] bg-m3-surfaceContainer border border-white/[0.08] p-6 space-y-4">
-                <div className="flex items-center gap-2">
-                  <Scale className="w-5 h-5 text-m3-primary" />
-                  <h2 className="text-lg font-display font-extrabold text-m3-cream">
-                    Biometric Parameters
-                  </h2>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-1.5 rounded-full bg-m3-surfaceLow border border-white/[0.06] grid grid-cols-2">
-                    {(['male', 'female'] as const).map((sex) => (
-                      <button
-                        key={sex}
-                        onClick={() => setBiometricsDraft((b) => ({ ...b, sex }))}
-                        className={`py-2 rounded-full text-xs font-display font-bold capitalize transition-colors ${
-                          biometricsDraft.sex === sex
-                            ? 'bg-m3-primary text-m3-surface'
-                            : 'text-m3-sand'
-                        }`}
-                      >
-                        {sex}
-                      </button>
-                    ))}
-                  </div>
-
-                  <button
-                    onClick={() =>
-                      setBiometricsDraft((b) => ({
-                        ...b,
-                        resistanceTraining: !b.resistanceTraining,
-                      }))
-                    }
-                    className={`px-3 py-2 rounded-full border text-xs font-display font-bold flex items-center justify-center gap-2 transition-colors ${
-                      biometricsDraft.resistanceTraining
-                        ? 'bg-m3-primaryContainer border-m3-primary/40 text-m3-onPrimaryContainer'
-                        : 'bg-m3-surfaceLow border-white/[0.06] text-m3-sand'
-                    }`}
-                  >
-                    <Dumbbell className="w-4 h-4" />
-                    <span>Lifting: {biometricsDraft.resistanceTraining ? 'Yes' : 'No'}</span>
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-m3-sand mb-1">Age (years)</label>
-                    <input
-                      type="number"
-                      value={biometricsDraft.age}
-                      onChange={(e) =>
-                        setBiometricsDraft((b) => ({
-                          ...b,
-                          age: Number(e.target.value) || 24,
-                        }))
-                      }
-                      className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.08] text-lg font-mono tabular-nums font-bold text-m3-cream"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-m3-sand mb-1">Height (cm)</label>
-                    <input
-                      type="number"
-                      value={biometricsDraft.heightCm}
-                      onChange={(e) =>
-                        setBiometricsDraft((b) => ({
-                          ...b,
-                          heightCm: Number(e.target.value) || 175,
-                        }))
-                      }
-                      className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.08] text-lg font-mono tabular-nums font-bold text-m3-cream"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-m3-sand mb-1">Current Weight (kg)</label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      value={biometricsDraft.weightKg}
-                      onChange={(e) =>
-                        setBiometricsDraft((b) => ({
-                          ...b,
-                          weightKg: Number(e.target.value) || 70,
-                        }))
-                      }
-                      className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.08] text-lg font-mono tabular-nums font-bold text-m3-cream"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-m3-sand mb-1">Target Weight (kg)</label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      value={biometricsDraft.targetWeightKg}
-                      onChange={(e) =>
-                        setBiometricsDraft((b) => ({
-                          ...b,
-                          targetWeightKg: Number(e.target.value) || 70,
-                        }))
-                      }
-                      className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-m3-primary/40 text-lg font-mono tabular-nums font-bold text-m3-primary"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-m3-sand mb-1">Timeline (weeks)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="104"
-                      value={biometricsDraft.targetTimelineWeeks}
-                      onChange={(e) =>
-                        setBiometricsDraft((b) => ({
-                          ...b,
-                          targetTimelineWeeks: Math.max(1, Number(e.target.value) || 12),
-                        }))
-                      }
-                      className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.08] text-lg font-mono tabular-nums font-bold text-m3-cream"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-m3-sand mb-1">Body Fat % (Optional)</label>
-                    <input
-                      type="number"
-                      placeholder={`Auto (~${metabolicResult.estimatedBodyFatPct}%)`}
-                      value={biometricsDraft.bodyFatPct ?? ''}
-                      onChange={(e) =>
-                        setBiometricsDraft((b) => ({
-                          ...b,
-                          bodyFatPct: e.target.value ? Number(e.target.value) : undefined,
-                        }))
-                      }
-                      className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.08] text-lg font-mono tabular-nums font-bold text-m3-cream placeholder-m3-muted"
-                    />
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {/* TAB 5: QUESTS, RANKS & ACHIEVEMENT BADGES */}
+          {/* TAB 4: QUESTS, RANKS & ACHIEVEMENT BADGES */}
           {activeTab === 'quests' && (
             <motion.div
               key="quests"
@@ -2642,7 +2357,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* TAB 6: SETTINGS, ONBOARDING WIZARD & API DIAGNOSTICS */}
+          {/* TAB 5: SETTINGS (HOUSES SCIENTIFIC BODY MATH, ONBOARDING WIZARD, API & BACKUP) */}
           {activeTab === 'settings' && (
             <motion.div
               key="settings"
@@ -2652,14 +2367,14 @@ export default function App() {
               transition={M3_SPRING}
               className="space-y-4"
             >
-              {/* Re-launch Onboarding Banner */}
-              <div className="rounded-[32px] bg-m3-primaryContainer border border-m3-primary/30 p-5 flex items-center justify-between gap-3">
+              {/* Re-launch Onboarding Wizard Banner */}
+              <div className="rounded-[32px] bg-m3-primaryContainer border border-m3-primary/35 p-5 flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-base font-display font-extrabold text-m3-cream">
-                    Guided Onboarding Setup
+                    Onboarding Setup Wizard
                   </h2>
                   <p className="text-xs text-m3-onPrimaryContainer/80 mt-0.5">
-                    Re-run the 4-step body metric & journal calibration wizard anytime.
+                    Re-run the step-by-step anthropometric & scientific target wizard.
                   </p>
                 </div>
                 <button
@@ -2669,17 +2384,280 @@ export default function App() {
                   }}
                   className="px-4 py-2.5 rounded-full bg-m3-primary text-m3-surface font-display font-extrabold text-xs shrink-0 active:scale-95 transition-transform"
                 >
-                  Open Wizard
+                  Run Wizard
                 </button>
+              </div>
+
+              {/* SCIENTIFIC BODY MATH & BIOMETRICS ENGINE (NOW INSIDE SETTINGS) */}
+              <div className="rounded-[36px] bg-m3-surfaceContainer border border-white/[0.08] p-6 space-y-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <span className="text-xs font-mono uppercase tracking-widest text-m3-primary font-semibold block">
+                      Hall (Lancet 2011) + Forbes (1987)
+                    </span>
+                    <h1 className="text-2xl font-display font-extrabold text-m3-cream tracking-tight mt-0.5">
+                      Scientific Body Math
+                    </h1>
+                  </div>
+                  <button
+                    onClick={() => setShowFormulaSheet((v) => !v)}
+                    className="px-3.5 py-2 rounded-full bg-m3-surfaceHigh text-m3-cream border border-white/[0.08] text-xs font-bold flex items-center gap-1.5"
+                  >
+                    <Info className="w-4 h-4 text-m3-primary" />
+                    {showFormulaSheet ? 'Hide' : 'Equations'}
+                  </button>
+                </div>
+
+                <MetabolicEquationVector className="w-full h-24" />
+
+                {/* Big Texted Computed Intake Banner */}
+                <div className="p-5 rounded-[28px] bg-m3-primaryContainer border border-m3-primary/35 flex items-center justify-between gap-3">
+                  <div>
+                    <span className="text-xs font-mono uppercase tracking-wider text-m3-onPrimaryContainer/80 block">
+                      Computed Daily Target
+                    </span>
+                    <div className="flex items-baseline gap-1.5 mt-1">
+                      <span className="text-4xl font-mono tabular-nums font-extrabold text-m3-cream">
+                        {metabolicResult.targetDailyCalories}
+                      </span>
+                      <span className="text-xs font-mono text-m3-onPrimaryContainer">kcal/d</span>
+                    </div>
+                    <span className="text-xs font-mono tabular-nums text-m3-onPrimaryContainer/90 mt-1 block">
+                      P {metabolicResult.recommendedMacros.proteinGrams}g • C{' '}
+                      {metabolicResult.recommendedMacros.carbsGrams}g • F{' '}
+                      {metabolicResult.recommendedMacros.fatGrams}g
+                    </span>
+                  </div>
+
+                  <button
+                    onClick={handleApplyScientificTargets}
+                    className="px-5 py-3.5 rounded-full bg-m3-primary hover:bg-m3-primarySoft text-m3-surface font-display font-extrabold text-xs shrink-0 active:scale-95 transition-all"
+                  >
+                    Apply Target
+                  </button>
+                </div>
+
+                {mathAppliedToast && (
+                  <div className="px-4 py-2.5 rounded-full bg-m3-primaryContainer border border-m3-primary/40 text-m3-onPrimaryContainer text-xs font-bold flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-m3-primary shrink-0" />
+                    <span>Scientific calorie & macro targets applied to your journal.</span>
+                  </div>
+                )}
+
+                {/* Divide-Y Scientific Parameters Ledger */}
+                <div className="rounded-[24px] bg-m3-surfaceLow border border-white/[0.06] divide-y divide-white/[0.06] overflow-hidden text-xs">
+                  <div className="px-4 py-2.5 flex items-center justify-between">
+                    <span className="text-m3-sand">Resting Metabolic Rate (RMR)</span>
+                    <span className="font-mono tabular-nums text-m3-cream font-bold">
+                      {metabolicResult.activeRmr} kcal/d
+                    </span>
+                  </div>
+                  <div className="px-4 py-2.5 flex items-center justify-between">
+                    <span className="text-m3-sand">
+                      Maintenance TDEE (PAL ×{metabolicResult.pal.toFixed(2)})
+                    </span>
+                    <span className="font-mono tabular-nums text-m3-amber font-bold">
+                      {metabolicResult.tdee} kcal/d
+                    </span>
+                  </div>
+                  <div className="px-4 py-2.5 flex items-center justify-between">
+                    <span className="text-m3-sand">Forbes Lean Partitioning (p)</span>
+                    <span className="font-mono tabular-nums text-m3-cream font-semibold">
+                      {(metabolicResult.forbesPartitionP * 100).toFixed(1)}% LBM /{' '}
+                      {((1 - metabolicResult.forbesPartitionP) * 100).toFixed(1)}% FM
+                    </span>
+                  </div>
+                  <div className="px-4 py-2.5 flex items-center justify-between">
+                    <span className="text-m3-sand">Effective Energy Density (ρ_eff)</span>
+                    <span className="font-mono tabular-nums text-m3-primarySoft font-bold">
+                      {metabolicResult.effectiveEnergyDensityKcalPerKg} kcal/kg
+                    </span>
+                  </div>
+                  <div className="px-4 py-2.5 flex items-center justify-between">
+                    <span className="text-m3-sand">Hall Adaptation (ε = 22)</span>
+                    <span className="font-mono tabular-nums text-m3-cream font-semibold">
+                      {metabolicResult.metabolicAdaptationKcal >= 0 ? '+' : ''}
+                      {metabolicResult.metabolicAdaptationKcal} kcal/d
+                    </span>
+                  </div>
+                </div>
+
+                <AnimatePresence>
+                  {showFormulaSheet && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="p-4 rounded-[22px] bg-m3-surfaceLow border border-white/[0.07] space-y-2 text-xs text-m3-sand leading-relaxed">
+                        <p className="font-display font-bold text-m3-primary">
+                          Peer-Reviewed Biomathematical Formulation
+                        </p>
+                        <p>
+                          <strong className="text-m3-cream">1. Basal Expenditure:</strong>{' '}
+                          Mifflin-St Jeor (1990) & Katch-McArdle (1973):
+                          <span className="block font-mono text-m3-muted mt-0.5">
+                            RMR = 10W + 6.25H - 5A + s | RMR_LBM = 370 + 21.6(LBM)
+                          </span>
+                        </p>
+                        <p>
+                          <strong className="text-m3-cream">2. Forbes Partitioning (1987):</strong>{' '}
+                          Non-linear lean vs adipose tissue fraction:
+                          <span className="block font-mono text-m3-muted mt-0.5">
+                            p = C / (C + FM), C = 10.4 * (rho_L / rho_F) = 1.996 kg
+                          </span>
+                        </p>
+                        <p>
+                          <strong className="text-m3-cream">
+                            3. Hall et al. (The Lancet, 2011):
+                          </strong>{' '}
+                          Dynamic adaptation (ε = 22 kcal/kg/d):
+                          <span className="block font-mono text-m3-muted mt-0.5">
+                            Delta_E = [rho_eff * (Delta_W / t)] + [0.5 * 22 * Delta_W]
+                          </span>
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Biometric Inputs inside Settings */}
+                <div className="pt-2 space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-m3-sand mb-1">Your Name</label>
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      className="w-full px-4 py-3 rounded-full bg-m3-surfaceLow border border-white/[0.08] text-sm font-display font-bold text-m3-cream"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-1.5 rounded-full bg-m3-surfaceLow border border-white/[0.06] grid grid-cols-2">
+                      {(['male', 'female'] as const).map((sex) => (
+                        <button
+                          key={sex}
+                          onClick={() => setBiometricsDraft((b) => ({ ...b, sex }))}
+                          className={`py-2 rounded-full text-xs font-display font-bold capitalize transition-colors ${
+                            biometricsDraft.sex === sex
+                              ? 'bg-m3-primary text-m3-surface'
+                              : 'text-m3-sand'
+                          }`}
+                        >
+                          {sex}
+                        </button>
+                      ))}
+                    </div>
+
+                    <button
+                      onClick={() =>
+                        setBiometricsDraft((b) => ({
+                          ...b,
+                          resistanceTraining: !b.resistanceTraining,
+                        }))
+                      }
+                      className={`px-3 py-2 rounded-full border text-xs font-display font-bold flex items-center justify-center gap-2 transition-colors ${
+                        biometricsDraft.resistanceTraining
+                          ? 'bg-m3-primaryContainer border-m3-primary/40 text-m3-onPrimaryContainer'
+                          : 'bg-m3-surfaceLow border-white/[0.06] text-m3-sand'
+                      }`}
+                    >
+                      <Dumbbell className="w-4 h-4" />
+                      <span>Lifting: {biometricsDraft.resistanceTraining ? 'Yes' : 'No'}</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block text-xs text-m3-sand mb-1">Age (yr)</label>
+                      <input
+                        type="number"
+                        value={biometricsDraft.age}
+                        onChange={(e) =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            age: Number(e.target.value) || 24,
+                          }))
+                        }
+                        className="w-full px-3 py-2.5 rounded-[18px] bg-m3-surfaceLow border border-white/[0.08] text-base font-mono tabular-nums font-bold text-m3-cream text-center"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-m3-sand mb-1">Height (cm)</label>
+                      <input
+                        type="number"
+                        value={biometricsDraft.heightCm}
+                        onChange={(e) =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            heightCm: Number(e.target.value) || 175,
+                          }))
+                        }
+                        className="w-full px-3 py-2.5 rounded-[18px] bg-m3-surfaceLow border border-white/[0.08] text-base font-mono tabular-nums font-bold text-m3-cream text-center"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-m3-sand mb-1">Weight (kg)</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={biometricsDraft.weightKg}
+                        onChange={(e) =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            weightKg: Number(e.target.value) || 70,
+                          }))
+                        }
+                        className="w-full px-3 py-2.5 rounded-[18px] bg-m3-surfaceLow border border-white/[0.08] text-base font-mono tabular-nums font-bold text-m3-cream text-center"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-xs text-m3-sand mb-1">Target Weight (kg)</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={biometricsDraft.targetWeightKg}
+                        onChange={(e) =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            targetWeightKg: Number(e.target.value) || 70,
+                          }))
+                        }
+                        className="w-full px-3 py-2.5 rounded-[18px] bg-m3-surfaceLow border border-m3-primary/40 text-base font-mono tabular-nums font-bold text-m3-primary text-center"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-m3-sand mb-1">Timeline (weeks)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="104"
+                        value={biometricsDraft.targetTimelineWeeks}
+                        onChange={(e) =>
+                          setBiometricsDraft((b) => ({
+                            ...b,
+                            targetTimelineWeeks: Math.max(1, Number(e.target.value) || 12),
+                          }))
+                        }
+                        className="w-full px-3 py-2.5 rounded-[18px] bg-m3-surfaceLow border border-white/[0.08] text-base font-mono tabular-nums font-bold text-m3-cream text-center"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* API Configuration Card */}
               <div className="rounded-[36px] bg-m3-surfaceContainer border border-white/[0.08] p-6 space-y-4">
                 <div className="flex items-center gap-2.5">
                   <KeyRound className="w-5 h-5 text-m3-primary" />
-                  <h1 className="text-lg font-display font-extrabold text-m3-cream">
+                  <h2 className="text-lg font-display font-extrabold text-m3-cream">
                     Vision API Connection
-                  </h1>
+                  </h2>
                 </div>
 
                 <p className="text-xs text-m3-sand leading-relaxed">
@@ -2756,89 +2734,6 @@ export default function App() {
                     </div>
                   </div>
                 )}
-              </div>
-
-              {/* Manual Profile & Goals Override */}
-              <div className="rounded-[36px] bg-m3-surfaceContainer border border-white/[0.08] p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Sliders className="w-5 h-5 text-m3-primary" />
-                    <h2 className="text-base font-display font-extrabold text-m3-cream">
-                      Profile & Targets
-                    </h2>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs text-m3-sand mb-1">Your Name</label>
-                  <input
-                    type="text"
-                    value={nameDraft}
-                    onChange={(e) => setNameDraft(e.target.value)}
-                    className="w-full px-4 py-3 rounded-full bg-m3-surfaceLow border border-white/[0.08] text-sm font-display font-bold text-m3-cream"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-m3-sand mb-1">
-                      Daily Calories (kcal)
-                    </label>
-                    <input
-                      type="number"
-                      value={goalsDraft.dailyCalories}
-                      onChange={(e) =>
-                        setGoalsDraft((g) => ({
-                          ...g,
-                          dailyCalories: Number(e.target.value),
-                        }))
-                      }
-                      className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.08] text-base font-mono tabular-nums font-bold text-m3-cream"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-m3-sand mb-1">Protein (g)</label>
-                    <input
-                      type="number"
-                      value={goalsDraft.proteinGrams}
-                      onChange={(e) =>
-                        setGoalsDraft((g) => ({
-                          ...g,
-                          proteinGrams: Number(e.target.value),
-                        }))
-                      }
-                      className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.08] text-base font-mono tabular-nums font-bold text-m3-cream"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-m3-sand mb-1">Carbs (g)</label>
-                    <input
-                      type="number"
-                      value={goalsDraft.carbsGrams}
-                      onChange={(e) =>
-                        setGoalsDraft((g) => ({
-                          ...g,
-                          carbsGrams: Number(e.target.value),
-                        }))
-                      }
-                      className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.08] text-base font-mono tabular-nums font-bold text-m3-cream"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-m3-sand mb-1">Dietary Fat (g)</label>
-                    <input
-                      type="number"
-                      value={goalsDraft.fatGrams}
-                      onChange={(e) =>
-                        setGoalsDraft((g) => ({
-                          ...g,
-                          fatGrams: Number(e.target.value),
-                        }))
-                      }
-                      className="w-full px-4 py-3 rounded-[20px] bg-m3-surfaceLow border border-white/[0.08] text-base font-mono tabular-nums font-bold text-m3-cream"
-                    />
-                  </div>
-                </div>
 
                 <div>
                   <label className="block text-xs text-m3-sand mb-1">
@@ -2858,58 +2753,78 @@ export default function App() {
                   className="w-full py-4 rounded-full bg-m3-primary hover:bg-m3-primarySoft text-m3-surface font-display font-extrabold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
                 >
                   <Check className="w-4 h-4 stroke-[2.5]" />
-                  Save Configuration
+                  Save All Settings
                 </button>
 
                 {settingsSavedToast && (
                   <p className="text-xs text-m3-primary text-center font-bold">
-                    Configuration saved.
+                    Settings saved.
                   </p>
                 )}
               </div>
 
-              {/* Reset Data */}
-              <div className="rounded-[30px] bg-m3-surfaceContainer border border-white/[0.06] p-5 flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-display font-bold text-m3-cream">
-                    Reset Device Journal
-                  </p>
-                  <p className="text-xs text-m3-sand">
-                    Clear all meals, journal entries, and XP on this phone.
-                  </p>
+              {/* JOURNAL BACKUP & RESET CARD */}
+              <div className="rounded-[32px] bg-m3-surfaceContainer border border-white/[0.08] p-5 space-y-3">
+                <h3 className="text-sm font-display font-extrabold text-m3-cream">
+                  Journal Backup & Reset
+                </h3>
+                <input
+                  ref={backupFileInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={handleImportBackupFile}
+                  className="hidden"
+                />
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={handleExportBackup}
+                    className="py-3 px-3 rounded-full bg-m3-surfaceHigh text-m3-cream text-xs font-display font-bold flex items-center justify-center gap-1.5 border border-white/[0.08]"
+                  >
+                    <Download className="w-3.5 h-3.5 text-m3-primary" />
+                    <span>Export</span>
+                  </button>
+                  <button
+                    onClick={() => backupFileInputRef.current?.click()}
+                    className="py-3 px-3 rounded-full bg-m3-surfaceHigh text-m3-cream text-xs font-display font-bold flex items-center justify-center gap-1.5 border border-white/[0.08]"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-m3-amber" />
+                    <span>Restore</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (window.confirm('Reset all logged meals, journal history, and XP?')) {
+                        clearAllData();
+                        setMeals(loadMeals());
+                        setUserState(loadUserState());
+                        setShowOnboarding(true);
+                        setOnboardingStep(0);
+                      }
+                    }}
+                    className="py-3 px-3 rounded-full bg-m3-rose/15 border border-m3-rose/35 text-m3-rose text-xs font-display font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Reset</span>
+                  </button>
                 </div>
-                <button
-                  onClick={() => {
-                    if (window.confirm('Reset all logged meals, journal history, and XP?')) {
-                      clearAllData();
-                      setMeals(loadMeals());
-                      setUserState(loadUserState());
-                      setShowOnboarding(true);
-                      setOnboardingStep(0);
-                    }
-                  }}
-                  className="px-4 py-2.5 rounded-full bg-m3-rose/15 border border-m3-rose/35 text-m3-rose text-xs font-display font-bold flex items-center gap-1.5"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Reset
-                </button>
+                {backupToast && (
+                  <p className="text-xs text-m3-primary font-bold text-center">{backupToast}</p>
+                )}
               </div>
             </motion.div>
           )}
         </AnimatePresence>
       </main>
 
-      {/* WARM MATERIAL 3 EXPRESSIVE FLOATING PILL NAVIGATION BAR */}
-      <nav className="fixed bottom-3 inset-x-3 max-w-[calc(28rem-1.5rem)] mx-auto z-40 rounded-full bg-m3-surfaceContainer/95 backdrop-blur-2xl border border-white/[0.1] px-2 py-2 shadow-[0_20px_40px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.08)]">
-        <div className="grid grid-cols-6 items-center">
+      {/* WARM MATERIAL 3 EXPRESSIVE 5-TAB FLOATING PILL NAVIGATION BAR */}
+      <nav className="fixed bottom-3 inset-x-4 max-w-[calc(28rem-2rem)] mx-auto z-40 rounded-full bg-m3-surfaceContainer/95 backdrop-blur-2xl border border-white/[0.1] px-2.5 py-2 shadow-[0_20px_40px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.08)]">
+        <div className="grid grid-cols-5 items-center">
           {(
             [
               { id: 'dashboard', label: 'Today', Icon: Activity },
               { id: 'journal', label: 'Journal', Icon: BookOpen },
               { id: 'scan', label: 'Scan', Icon: Camera },
-              { id: 'math', label: 'Math', Icon: Calculator },
               { id: 'quests', label: 'Ranks', Icon: Trophy },
-              { id: 'settings', label: 'Config', Icon: Settings },
+              { id: 'settings', label: 'Settings', Icon: Settings },
             ] as const
           ).map(({ id, label, Icon }) => {
             const active = activeTab === id;
@@ -2919,7 +2834,7 @@ export default function App() {
                 onClick={() => setActiveTab(id)}
                 className="relative flex flex-col items-center justify-center py-1 group"
               >
-                <div className="relative px-3.5 py-1.5 rounded-full flex items-center justify-center">
+                <div className="relative px-4 py-1.5 rounded-full flex items-center justify-center">
                   {active && (
                     <motion.div
                       layoutId="m3-bottom-nav-pill"

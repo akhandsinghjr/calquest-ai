@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="128" fill="#14100E"/>
+  <rect x="24" y="24" width="464" height="464" rx="108" fill="#241C18" stroke="#F4845F" stroke-opacity="0.28" stroke-width="6"/>
+  <circle cx="256" cy="256" r="168" stroke="#F6BD60" stroke-opacity="0.22" stroke-width="8" stroke-dasharray="28 18" stroke-linecap="round"/>
+  <!-- Camera Focus Corner Brackets -->
+  <path d="M124 172V144C124 132.954 132.954 124 144 124H172" stroke="#FAF3EE" stroke-opacity="0.55" stroke-width="12" stroke-linecap="round"/>
+  <path d="M388 172V144C388 132.954 379.046 124 368 124H340" stroke="#FAF3EE" stroke-opacity="0.55" stroke-width="12" stroke-linecap="round"/>
+  <path d="M124 340V368C124 379.046 132.954 388 144 388H172" stroke="#FAF3EE" stroke-opacity="0.55" stroke-width="12" stroke-linecap="round"/>
+  <path d="M388 340V368C388 379.046 379.046 388 368 388H340" stroke="#FAF3EE" stroke-opacity="0.55" stroke-width="12" stroke-linecap="round"/>
+  <!-- Metabolic Flame + Leaf Crest -->
+  <path d="M256 116C256 116 318 168 318 226C318 260.242 290.242 288 256 288C221.758 288 194 260.242 194 226C194 198 212 174 228 158C226 182 242 196 256 196C272 196 278 172 256 116Z" fill="url(#flameGrad)"/>
+  <!-- Botanical Sage Leaf -->
+  <path d="M258 242C258 206 292 180 330 182C328 220 302 250 258 242Z" fill="#84A59D"/>
+  <!-- Warm Terracotta Ceramic Bowl -->
+  <path d="M140 274H372C372 338.065 320.065 390 256 390C191.935 390 140 338.065 140 274Z" fill="url(#bowlGrad)"/>
+  <path d="M168 274H344" stroke="#FAF3EE" stroke-width="12" stroke-linecap="round"/>
+  <path d="M206 406H306" stroke="#F4845F" stroke-width="14" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="flameGrad" x1="256" y1="116" x2="256" y2="288" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F6BD60"/>
+      <stop offset="1" stop-color="#F4845F"/>
+    </linearGradient>
+    <linearGradient id="bowlGrad" x1="140" y1="274" x2="372" y2="390" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4845F"/>
+      <stop offset="1" stop-color="#C85A38"/>
+    </linearGradient>
+  </defs>
+</svg>
