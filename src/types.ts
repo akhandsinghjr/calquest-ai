@@ -24,6 +24,18 @@ export interface GeminiMealAnalysis {
   healthScore: number; // 1 to 100
   wittyFeedback: string;
   confidence: 'high' | 'medium' | 'low';
+  latencyMs?: number;
+  modelUsed?: string;
+  payloadKb?: number;
+}
+
+export interface ScanProgressUpdate {
+  stage: 'compressing' | 'connecting' | 'vision' | 'macros' | 'complete';
+  percent: number;
+  label: string;
+  detail?: string;
+  activeModel?: string;
+  payloadKb?: number;
 }
 
 export interface MealLog extends GeminiMealAnalysis {

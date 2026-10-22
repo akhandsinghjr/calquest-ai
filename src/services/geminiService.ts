@@ -1,20 +1,34 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { GoogleGenAI } from '@google/genai';
-import type { GeminiMealAnalysis } from '../types';
+import type { GeminiMealAnalysis, ScanProgressUpdate } from '../types';
 
 const STORAGE_KEY_API = 'calquest_gemini_api_key';
+const STORAGE_KEY_FAST_ROUTE = 'calquest_fast_route_v2';
+const STORAGE_KEY_DISCOVERED_MODELS = 'calquest_discovered_models_v2';
+const ROUTE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 /**
- * Prioritized cascade of multimodal vision models.
- * If gemini-3.8-flash returns 503 (High Demand / Overloaded) or 429,
- * the service automatically fails over to the next available model.
+ * Low-latency cascade of multimodal vision models.
+ * Flash-Lite and Flash models with minimal thinking deliver the fastest time-to-JSON.
  */
 const MODEL_FAILOVER_CHAIN = [
-  'gemini-3.8-flash',
   'gemini-3.5-flash-lite',
-  'gemini-3.5-flash',
+  'gemini-3.8-flash',
   'gemini-3.1-flash-lite',
+  'gemini-3.5-flash',
 ];
+
+type EndpointKind = 'interactions' | 'generateContent';
+
+interface CachedFastRoute {
+  model: string;
+  endpoint: EndpointKind;
+  latencyMs: number;
+  updatedAt: number;
+}
+
+let inMemoryFastRoute: CachedFastRoute | null = null;
+let inMemoryDiscoveredModels: { models: string[]; updatedAt: number } | null = null;
 
 function sanitizeApiKey(raw: string | undefined | null): string {
   if (!raw) return '';
@@ -35,70 +49,99 @@ export function setStoredApiKey(key: string): void {
   } else {
     localStorage.removeItem(STORAGE_KEY_API);
   }
+  // Reset cached route when API key changes
+  inMemoryFastRoute = null;
+  try {
+    localStorage.removeItem(STORAGE_KEY_FAST_ROUTE);
+  } catch {
+    // ignore storage errors
+  }
 }
 
 export function hasBuiltInApiKey(): boolean {
   return Boolean(sanitizeApiKey(import.meta.env.VITE_GEMINI_API_KEY));
 }
 
+export function getCachedFastRoute(): CachedFastRoute | null {
+  const now = Date.now();
+  if (inMemoryFastRoute && now - inMemoryFastRoute.updatedAt < ROUTE_CACHE_TTL_MS) {
+    return inMemoryFastRoute;
+  }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_FAST_ROUTE);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedFastRoute;
+    if (
+      parsed &&
+      typeof parsed.model === 'string' &&
+      (parsed.endpoint === 'interactions' || parsed.endpoint === 'generateContent') &&
+      now - Number(parsed.updatedAt || 0) < ROUTE_CACHE_TTL_MS
+    ) {
+      inMemoryFastRoute = parsed;
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function saveCachedFastRoute(route: CachedFastRoute): void {
+  inMemoryFastRoute = route;
+  try {
+    localStorage.setItem(STORAGE_KEY_FAST_ROUTE, JSON.stringify(route));
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Compact schema without verbose descriptions to speed up constrained decoding compilation
+ * and minimize output tokens.
+ */
 const MEAL_ANALYSIS_SCHEMA = {
   type: 'object',
   properties: {
-    mealName: {
-      type: 'string',
-      description: 'Concise, appetizing name of the meal or drink detected in the photo.',
-    },
-    emoji: {
-      type: 'string',
-      description: 'Short category label for the meal (e.g. "bowl", "plate", "salad", "protein", "beverage"). Do not use emojis.',
-    },
-    totalCalories: {
-      type: 'number',
-      description: 'Total estimated calories (kcal) across all detected food items.',
-    },
+    mealName: { type: 'string' },
+    emoji: { type: 'string' },
+    totalCalories: { type: 'number' },
     macros: {
       type: 'object',
       properties: {
-        proteinGrams: { type: 'number', description: 'Total protein in grams.' },
-        carbsGrams: { type: 'number', description: 'Total carbohydrates in grams.' },
-        fatGrams: { type: 'number', description: 'Total fat in grams.' },
-        fiberGrams: { type: 'number', description: 'Total dietary fiber in grams.' },
+        proteinGrams: { type: 'number' },
+        carbsGrams: { type: 'number' },
+        fatGrams: { type: 'number' },
+        fiberGrams: { type: 'number' },
       },
       required: ['proteinGrams', 'carbsGrams', 'fatGrams', 'fiberGrams'],
     },
     items: {
       type: 'array',
-      description: 'Itemized breakdown of each distinct component on the plate or in the meal.',
       items: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: 'Name of the individual food item.' },
-          portionEstimate: {
-            type: 'string',
-            description: 'Estimated serving size or weight (e.g. "150g", "1 cup", "2 slices").',
-          },
-          calories: { type: 'number', description: 'Calories (kcal) for this item.' },
-          proteinGrams: { type: 'number', description: 'Protein (g) for this item.' },
-          carbsGrams: { type: 'number', description: 'Carbs (g) for this item.' },
-          fatGrams: { type: 'number', description: 'Fat (g) for this item.' },
+          name: { type: 'string' },
+          portionEstimate: { type: 'string' },
+          calories: { type: 'number' },
+          proteinGrams: { type: 'number' },
+          carbsGrams: { type: 'number' },
+          fatGrams: { type: 'number' },
         },
-        required: ['name', 'portionEstimate', 'calories', 'proteinGrams', 'carbsGrams', 'fatGrams'],
+        required: [
+          'name',
+          'portionEstimate',
+          'calories',
+          'proteinGrams',
+          'carbsGrams',
+          'fatGrams',
+        ],
       },
     },
-    healthScore: {
-      type: 'number',
-      description:
-        'Nutritional quality score from 1 to 100 based on nutrient density, macro balance, whole ingredients, and processing level.',
-    },
-    wittyFeedback: {
-      type: 'string',
-      description:
-        'Short, encouraging nutritionist insight (1-2 sentences) praising good choices or giving a helpful nutrition tip. Never include emojis.',
-    },
+    healthScore: { type: 'number' },
+    wittyFeedback: { type: 'string' },
     confidence: {
       type: 'string',
       enum: ['high', 'medium', 'low'],
-      description: 'Confidence level in visual portion and ingredient estimation.',
     },
   },
   required: [
@@ -148,19 +191,13 @@ function extractTextFromInteractionResponse(data: Record<string, unknown>): stri
   return null;
 }
 
-function isRetryableOverloadError(err: unknown): boolean {
+function isFatalAuthError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   return (
-    msg.includes('503') ||
-    msg.includes('429') ||
-    msg.includes('404') ||
-    msg.includes('500') ||
-    msg.includes('overloaded') ||
-    msg.includes('high demand') ||
-    msg.includes('high in demand') ||
-    msg.includes('unavailable') ||
-    msg.includes('resource_exhausted') ||
-    msg.includes('not found')
+    msg.includes('api_key_invalid') ||
+    msg.includes('api key not valid') ||
+    msg.includes('permission_denied') ||
+    msg.includes('unauthenticated')
   );
 }
 
@@ -169,38 +206,64 @@ async function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Primary call via Interactions API (/v1beta/interactions).
+ * Primary call via Interactions API (/v1beta/interactions) with minimal thinking & store=false
+ * to eliminate server-side reasoning and persistence latency.
  */
 async function callInteractionsSingleModel(
   apiKey: string,
   model: string,
   basePayload: Omit<Record<string, unknown>, 'model'>
 ): Promise<string> {
-  const fullPayload = { ...basePayload, model };
+  const fastPayload = {
+    ...basePayload,
+    model,
+    store: false,
+    generation_config: {
+      thinking_level: 'minimal',
+      temperature: 0.2,
+    },
+  };
 
   if (!Capacitor.isNativePlatform()) {
     try {
       const client = new GoogleGenAI({ apiKey });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const interaction = await client.interactions.create(fullPayload as any);
+      const interaction = await client.interactions.create(fastPayload as any);
       if (interaction.output_text) {
         return interaction.output_text;
       }
     } catch (sdkErr) {
-      if (isRetryableOverloadError(sdkErr)) {
+      if (isFatalAuthError(sdkErr)) {
         throw sdkErr;
       }
     }
   }
 
-  const res = await CapacitorHttp.post({
+  let res = await CapacitorHttp.post({
     url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
     headers: {
       'Content-Type': 'application/json',
       'x-goog-api-key': apiKey,
     },
-    data: fullPayload,
+    data: fastPayload,
+    connectTimeout: 7000,
+    readTimeout: 12000,
   });
+
+  // If the specific model doesn't support `thinking_level: minimal`, retry immediately without generation_config
+  if (res.status === 400) {
+    const fallbackPayload = { ...basePayload, model, store: false };
+    res = await CapacitorHttp.post({
+      url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      data: fallbackPayload,
+      connectTimeout: 7000,
+      readTimeout: 12000,
+    });
+  }
 
   const responseData =
     typeof res.data === 'string' ? JSON.parse(res.data) : (res.data as Record<string, unknown>);
@@ -222,7 +285,8 @@ async function callInteractionsSingleModel(
 }
 
 /**
- * Secondary endpoint failover if /v1beta/interactions itself is returning 503.
+ * Low-latency `:generateContent` call with `thinkingBudget: 0` so the model outputs
+ * JSON tokens immediately without spending 4-8 seconds on hidden reasoning tokens.
  */
 async function callModelsEndpointFailover(
   apiKey: string,
@@ -242,24 +306,52 @@ async function callModelsEndpointFailover(
     });
   }
 
-  const generationConfig: Record<string, unknown> = {};
+  const baseGenConfig: Record<string, unknown> = {
+    temperature: 0.2,
+  };
   if (jsonSchema) {
-    generationConfig.responseMimeType = 'application/json';
-    generationConfig.responseSchema = jsonSchema;
+    baseGenConfig.responseMimeType = 'application/json';
+    baseGenConfig.responseSchema = jsonSchema;
   }
 
-  const res = await CapacitorHttp.post({
-    url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-      apiKey
-    )}`,
+  const endpointUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+    apiKey
+  )}`;
+
+  // First try with thinkingBudget: 0 for near-instant time-to-first-token
+  let res = await CapacitorHttp.post({
+    url: endpointUrl,
     headers: {
       'Content-Type': 'application/json',
     },
     data: {
       contents: [{ role: 'user', parts }],
-      generationConfig,
+      generationConfig: {
+        ...baseGenConfig,
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
+      },
     },
+    connectTimeout: 7000,
+    readTimeout: 12000,
   });
+
+  // If the model rejects `thinkingConfig`, immediately call with standard baseGenConfig
+  if (res.status === 400) {
+    res = await CapacitorHttp.post({
+      url: endpointUrl,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      data: {
+        contents: [{ role: 'user', parts }],
+        generationConfig: baseGenConfig,
+      },
+      connectTimeout: 7000,
+      readTimeout: 12000,
+    });
+  }
 
   const responseData =
     typeof res.data === 'string' ? JSON.parse(res.data) : (res.data as Record<string, unknown>);
@@ -281,12 +373,41 @@ async function callModelsEndpointFailover(
 }
 
 /**
- * Queries the user's accessible Flash/Lite models dynamically when primary models return 503.
+ * Queries and caches the user's accessible Flash/Lite models so we never waste roundtrips
+ * fetching `/v1beta/models` on every meal scan.
  */
 async function discoverAvailableVisionModels(apiKey: string): Promise<string[]> {
+  const now = Date.now();
+  if (
+    inMemoryDiscoveredModels &&
+    now - inMemoryDiscoveredModels.updatedAt < ROUTE_CACHE_TTL_MS &&
+    inMemoryDiscoveredModels.models.length > 0
+  ) {
+    return inMemoryDiscoveredModels.models;
+  }
+
+  try {
+    const cachedRaw = localStorage.getItem(STORAGE_KEY_DISCOVERED_MODELS);
+    if (cachedRaw) {
+      const parsed = JSON.parse(cachedRaw) as { models: string[]; updatedAt: number };
+      if (
+        Array.isArray(parsed?.models) &&
+        parsed.models.length > 0 &&
+        now - Number(parsed.updatedAt || 0) < ROUTE_CACHE_TTL_MS
+      ) {
+        inMemoryDiscoveredModels = parsed;
+        return parsed.models;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   try {
     const res = await CapacitorHttp.get({
       url: `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
+      connectTimeout: 5000,
+      readTimeout: 7000,
     });
     if (res.status < 200 || res.status >= 300) return [];
     const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
@@ -305,18 +426,30 @@ async function discoverAvailableVisionModels(apiKey: string): Promise<string[]> 
         !rawName.includes('image') &&
         !rawName.includes('live') &&
         !rawName.includes('embedding') &&
+        !rawName.includes('audio') &&
         (methods.length === 0 || methods.includes('generateContent'))
       ) {
         candidates.push(rawName);
       }
     }
 
-    // Prioritize lite models first during high-demand 503 events since Lite pools have the most spare capacity
+    // Prioritize flash-lite first for lowest latency, then flash
     candidates.sort((a, b) => {
-      const aLite = a.includes('lite') ? 0 : 1;
-      const bLite = b.includes('lite') ? 0 : 1;
-      return aLite - bLite;
+      const score = (name: string) => {
+        if (name.includes('flash-lite')) return 0;
+        if (name.includes('flash')) return 1;
+        return 2;
+      };
+      return score(a) - score(b);
     });
+
+    const entry = { models: candidates, updatedAt: now };
+    inMemoryDiscoveredModels = entry;
+    try {
+      localStorage.setItem(STORAGE_KEY_DISCOVERED_MODELS, JSON.stringify(entry));
+    } catch {
+      // ignore
+    }
 
     return candidates;
   } catch {
@@ -324,10 +457,43 @@ async function discoverAvailableVisionModels(apiKey: string): Promise<string[]> 
   }
 }
 
+async function trySingleRoute(params: {
+  apiKey: string;
+  model: string;
+  endpoint: EndpointKind;
+  basePayload: Omit<Record<string, unknown>, 'model'>;
+  promptText: string;
+  base64Image?: string;
+  mimeType?: string;
+  jsonSchema?: Record<string, unknown>;
+}): Promise<{ text: string; modelUsed: string; latencyMs: number }> {
+  const t0 = Date.now();
+  const text =
+    params.endpoint === 'interactions'
+      ? await callInteractionsSingleModel(params.apiKey, params.model, params.basePayload)
+      : await callModelsEndpointFailover(
+          params.apiKey,
+          params.model,
+          params.promptText,
+          params.base64Image,
+          params.mimeType,
+          params.jsonSchema
+        );
+  const latencyMs = Date.now() - t0;
+  saveCachedFastRoute({
+    model: params.model,
+    endpoint: params.endpoint,
+    latencyMs,
+    updatedAt: Date.now(),
+  });
+  return { text, modelUsed: params.model, latencyMs };
+}
+
 /**
- * Executes a request across the automatic model & endpoint failover chain.
- * If gemini-3.8-flash is experiencing 503 High Demand, it automatically routes
- * to Flash-Lite / alternate Flash models so the user never gets blocked by 503s.
+ * Executes a request with sticky fast-route caching and zero-duplicate failover.
+ * 1. If we already know the fastest working (model, endpoint) from a previous call,
+ *    it executes immediately on Attempt #1 (0 wasted probes).
+ * 2. Otherwise it walks the deduplicated low-latency candidate list with progress callbacks.
  */
 async function executeWithResilientFailover(params: {
   apiKey: string;
@@ -336,53 +502,88 @@ async function executeWithResilientFailover(params: {
   base64Image?: string;
   mimeType?: string;
   jsonSchema?: Record<string, unknown>;
-}): Promise<{ text: string; modelUsed: string }> {
+  payloadKb?: number;
+  onProgress?: (update: ScanProgressUpdate) => void;
+}): Promise<{ text: string; modelUsed: string; latencyMs: number }> {
   let lastError: unknown = null;
+  const triedRoutes = new Set<string>();
 
-  // Step 1: Try the primary Interactions API chain (gemini-3.8-flash -> gemini-3.5-flash-lite -> gemini-3.5-flash -> gemini-3.1-flash-lite)
-  for (const model of MODEL_FAILOVER_CHAIN) {
+  // FAST PATH: Try sticky cached route first!
+  const cachedRoute = getCachedFastRoute();
+  if (cachedRoute) {
+    const routeKey = `${cachedRoute.endpoint}:${cachedRoute.model}`;
+    triedRoutes.add(routeKey);
+    params.onProgress?.({
+      stage: 'vision',
+      percent: 42,
+      label: `Analyzing plate with ${cachedRoute.model}`,
+      detail: 'Fast-path route active • Minimal thinking latency',
+      activeModel: cachedRoute.model,
+      payloadKb: params.payloadKb,
+    });
     try {
-      const text = await callInteractionsSingleModel(params.apiKey, model, params.basePayload);
-      return { text, modelUsed: model };
+      return await trySingleRoute({
+        ...params,
+        model: cachedRoute.model,
+        endpoint: cachedRoute.endpoint,
+      });
     } catch (err) {
       lastError = err;
-      if (!isRetryableOverloadError(err)) {
-        throw err;
-      }
-      await sleep(250);
+      if (isFatalAuthError(err)) throw err;
     }
   }
 
-  // Step 2: Dynamically discover available Flash / Lite models on the server and try both endpoints
+  // Build candidate list (combining prioritized chain + cached/discovered server models)
   const discoveredModels = await discoverAvailableVisionModels(params.apiKey);
-  const allCandidates = Array.from(new Set([...MODEL_FAILOVER_CHAIN, ...discoveredModels]));
+  const allCandidates = Array.from(new Set([...discoveredModels, ...MODEL_FAILOVER_CHAIN]));
 
+  // Try each candidate across the fastest endpoint first without ever repeating a (endpoint, model) pair
+  const endpointsOrder: EndpointKind[] =
+    discoveredModels.length > 0
+      ? ['generateContent', 'interactions']
+      : ['interactions', 'generateContent'];
+
+  let attemptIdx = 0;
   for (const model of allCandidates) {
-    try {
-      const text = await callInteractionsSingleModel(params.apiKey, model, params.basePayload);
-      return { text, modelUsed: model };
-    } catch {
-      // Try alternate endpoint if Interactions endpoint is 503 overloaded for this model
+    for (const endpoint of endpointsOrder) {
+      const routeKey = `${endpoint}:${model}`;
+      if (triedRoutes.has(routeKey)) continue;
+      triedRoutes.add(routeKey);
+      attemptIdx++;
+
+      params.onProgress?.({
+        stage: 'vision',
+        percent: Math.min(76, 36 + attemptIdx * 8),
+        label: `Analyzing portions with ${model}`,
+        detail:
+          attemptIdx === 1
+            ? 'Segmenting food items & estimating 3D volume'
+            : `Switching to low-latency node (${model})`,
+        activeModel: model,
+        payloadKb: params.payloadKb,
+      });
+
       try {
-        const text = await callModelsEndpointFailover(
-          params.apiKey,
+        return await trySingleRoute({
+          ...params,
           model,
-          params.promptText,
-          params.base64Image,
-          params.mimeType,
-          params.jsonSchema
-        );
-        return { text, modelUsed: model };
-      } catch (err2) {
-        lastError = err2;
+          endpoint,
+        });
+      } catch (err) {
+        lastError = err;
+        if (isFatalAuthError(err)) {
+          throw err;
+        }
+        await sleep(60);
       }
     }
-    await sleep(300);
   }
 
   throw lastError instanceof Error
     ? lastError
-    : new Error('Service is temporarily experiencing high demand (503). Please tap again in a few seconds.');
+    : new Error(
+        'Service is temporarily experiencing high demand (503). Please tap again in a few seconds.'
+      );
 }
 
 export async function testGeminiConnection(overrideKey?: string): Promise<{
@@ -410,7 +611,7 @@ export async function testGeminiConnection(overrideKey?: string): Promise<{
     });
     return {
       ok: true,
-      message: `Connected (${modelUsed})`,
+      message: `Connected (${modelUsed} • Fast Route Cached)`,
       latencyMs: Date.now() - start,
     };
   } catch (err: unknown) {
@@ -427,34 +628,44 @@ export async function analyzeFoodPhotoWithGemini(params: {
   mimeType: string;
   userNote?: string;
   customInstruction?: string;
+  onProgress?: (update: ScanProgressUpdate) => void;
 }): Promise<GeminiMealAnalysis> {
+  const overallStart = Date.now();
   const apiKey = getStoredApiKey();
   if (!apiKey) {
     throw new Error('Missing API Key. Please add your API key in the Settings tab first.');
   }
 
   const cleanBase64 = params.base64Data.replace(/^data:image\/[a-zA-Z+]+;base64,/, '').trim();
+  const payloadKb = Math.max(1, Math.round((cleanBase64.length * 0.75) / 1024));
+
+  params.onProgress?.({
+    stage: 'connecting',
+    percent: 22,
+    label: 'Prepared single-tile vision payload',
+    detail: `Compressed to ${payloadKb} KB • Connecting to Gemini Flash`,
+    payloadKb,
+  });
 
   const promptParts = [
-    'You are CalQuest, an expert visual nutritionist and fitness coach.',
-    'Analyze this food photo and calculate its calories and macronutrients accurately.',
-    'Estimate realistic portion sizes using visual cues such as plate size, utensils, bowl depth, or packaging.',
-    'Include hidden calories such as cooking oils, sauces, dressings, or butter where visually or culinarily typical.',
+    'Analyze this meal photo and return JSON with accurate item-level calories and macros (protein, carbs, fat, fiber in grams).',
+    'Estimate realistic portion weights from plate/bowl geometry and include typical cooking oils or sauces.',
+    'Do not use emojis anywhere.',
   ];
 
   if (params.customInstruction?.trim()) {
-    promptParts.push(`Personal dietary context: ${params.customInstruction.trim()}`);
+    promptParts.push(`Dietary context: ${params.customInstruction.trim()}`);
   }
 
   if (params.userNote?.trim()) {
-    promptParts.push(`Note about this specific meal: ${params.userNote.trim()}`);
+    promptParts.push(`Meal note: ${params.userNote.trim()}`);
   }
 
   const promptText = promptParts.join('\n');
 
   const basePayload = {
     system_instruction:
-      'You are CalQuest, an expert visual nutritionist and fitness coach. Break down every meal photo into accurate item-level calorie and macronutrient estimates and return strictly valid JSON matching the requested schema.',
+      'You are CalQuest, a fast and accurate visual nutritionist. Return strictly valid JSON matching the schema with zero emojis.',
     input: [
       {
         type: 'text' as const,
@@ -473,13 +684,24 @@ export async function analyzeFoodPhotoWithGemini(params: {
     },
   };
 
-  const { text: rawText } = await executeWithResilientFailover({
+  const { text: rawText, modelUsed } = await executeWithResilientFailover({
     apiKey,
     basePayload,
     promptText,
     base64Image: cleanBase64,
     mimeType: params.mimeType || 'image/jpeg',
     jsonSchema: MEAL_ANALYSIS_SCHEMA,
+    payloadKb,
+    onProgress: params.onProgress,
+  });
+
+  params.onProgress?.({
+    stage: 'macros',
+    percent: 88,
+    label: 'Synthesizing macro & calorie breakdown',
+    detail: `Received structured response from ${modelUsed}`,
+    activeModel: modelUsed,
+    payloadKb,
   });
 
   const cleanedJson = rawText
@@ -499,6 +721,17 @@ export async function analyzeFoodPhotoWithGemini(params: {
     included: true,
   }));
 
+  const totalLatencyMs = Date.now() - overallStart;
+
+  params.onProgress?.({
+    stage: 'complete',
+    percent: 100,
+    label: 'Analysis complete',
+    detail: `Completed in ${(totalLatencyMs / 1000).toFixed(1)}s via ${modelUsed}`,
+    activeModel: modelUsed,
+    payloadKb,
+  });
+
   return {
     mealName: parsed.mealName || 'Scanned Meal',
     emoji: 'utensils',
@@ -514,5 +747,8 @@ export async function analyzeFoodPhotoWithGemini(params: {
     wittyFeedback:
       parsed.wittyFeedback || 'Great job logging your meal! Consistency is the ultimate superpower.',
     confidence: parsed.confidence || 'medium',
+    latencyMs: totalLatencyMs,
+    modelUsed,
+    payloadKb,
   };
 }

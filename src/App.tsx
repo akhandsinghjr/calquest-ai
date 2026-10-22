@@ -61,6 +61,7 @@ import type {
   GeminiMealAnalysis,
   MealLog,
   SavedMealTemplate,
+  ScanProgressUpdate,
   UserGoals,
   UserState,
 } from './types';
@@ -255,7 +256,7 @@ function getPastDateKeys(daysCount: number): {
   return result;
 }
 
-async function compressImageDataUrl(dataUrl: string, maxWidth = 1024): Promise<string> {
+async function compressImageDataUrl(dataUrl: string, maxWidth = 720): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -269,7 +270,7 @@ async function compressImageDataUrl(dataUrl: string, maxWidth = 1024): Promise<s
         return;
       }
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL('image/jpeg', 0.82));
+      resolve(canvas.toDataURL('image/jpeg', 0.76));
     };
     img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
@@ -334,7 +335,15 @@ export default function App() {
     return 'dinner';
   });
   const [userNote, setUserNote] = useState('');
+  const [lastAnalyzedNote, setLastAnalyzedNote] = useState('');
+  const [autoScanOnCapture, setAutoScanOnCapture] = useState<boolean>(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [scanProgress, setScanProgress] = useState<ScanProgressUpdate>({
+    stage: 'compressing',
+    percent: 0,
+    label: 'Ready to scan',
+  });
+  const [scanElapsedMs, setScanElapsedMs] = useState<number>(0);
   const [scanError, setScanError] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<GeminiMealAnalysis | null>(null);
   const [portionMultiplier, setPortionMultiplier] = useState<number>(1);
@@ -766,20 +775,83 @@ export default function App() {
     reader.readAsText(file);
   }
 
+  // Smooth progress bar & live stopwatch while analyzing
+  useEffect(() => {
+    if (!isAnalyzing) return;
+    const t0 = Date.now();
+    setScanElapsedMs(0);
+    const interval = setInterval(() => {
+      setScanElapsedMs(Date.now() - t0);
+      setScanProgress((prev) => {
+        if (prev.stage === 'complete' || prev.percent >= 92) return prev;
+        const step = prev.percent < 60 ? 3 : prev.percent < 80 ? 1.5 : 0.6;
+        return {
+          ...prev,
+          percent: Math.min(92, Math.round((prev.percent + step) * 10) / 10),
+        };
+      });
+    }, 120);
+    return () => clearInterval(interval);
+  }, [isAnalyzing]);
+
+  async function runGeminiAnalysisForPhoto(photoUrl: string, noteToUse?: string) {
+    if (!photoUrl) return;
+    const activeNote = noteToUse !== undefined ? noteToUse : userNote;
+    setScanError(null);
+    setIsAnalyzing(true);
+    setScanProgress({
+      stage: 'compressing',
+      percent: 12,
+      label: 'Optimizing single-tile vision payload',
+      detail: '720px fast tile • Minimal thinking latency mode',
+    });
+    try {
+      const mimeMatch = photoUrl.match(/^data:(image\/[a-zA-Z+]+);base64,/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+
+      const result = await analyzeFoodPhotoWithGemini({
+        base64Data: photoUrl,
+        mimeType,
+        userNote: activeNote,
+        customInstruction: userState.customPromptInstruction,
+        onProgress: (update) => {
+          setScanProgress((prev) => ({
+            ...update,
+            percent: Math.max(prev.percent, update.percent),
+          }));
+        },
+      });
+
+      setAnalysisResult(result);
+      setLastAnalyzedNote(activeNote.trim());
+      setEditableItems(result.items.map((i) => ({ ...i, included: true })));
+      setPortionMultiplier(1);
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to analyze meal photo. Check your API key.';
+      setScanError(message);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }
+
   async function handleTakePhoto(source: 'camera' | 'gallery') {
     setScanError(null);
     try {
       if (Capacitor.isNativePlatform()) {
         const photo = await CapCamera.getPhoto({
-          quality: 85,
+          quality: 80,
           allowEditing: false,
           resultType: CameraResultType.DataUrl,
           source: source === 'camera' ? CameraSource.Camera : CameraSource.Photos,
         });
         if (photo.dataUrl) {
-          const compressed = await compressImageDataUrl(photo.dataUrl);
+          const compressed = await compressImageDataUrl(photo.dataUrl, 720);
           setCapturedPhotoUrl(compressed);
           setAnalysisResult(null);
+          if (autoScanOnCapture) {
+            void runGeminiAnalysisForPhoto(compressed, userNote);
+          }
         }
       } else {
         fileInputRef.current?.click();
@@ -799,9 +871,12 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = async () => {
       if (typeof reader.result === 'string') {
-        const compressed = await compressImageDataUrl(reader.result);
+        const compressed = await compressImageDataUrl(reader.result, 720);
         setCapturedPhotoUrl(compressed);
         setAnalysisResult(null);
+        if (autoScanOnCapture) {
+          void runGeminiAnalysisForPhoto(compressed, userNote);
+        }
       }
     };
     reader.readAsDataURL(file);
@@ -809,29 +884,7 @@ export default function App() {
 
   async function handleRunGeminiAnalysis() {
     if (!capturedPhotoUrl) return;
-    setScanError(null);
-    setIsAnalyzing(true);
-    try {
-      const mimeMatch = capturedPhotoUrl.match(/^data:(image\/[a-zA-Z+]+);base64,/);
-      const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-
-      const result = await analyzeFoodPhotoWithGemini({
-        base64Data: capturedPhotoUrl,
-        mimeType,
-        userNote,
-        customInstruction: userState.customPromptInstruction,
-      });
-
-      setAnalysisResult(result);
-      setEditableItems(result.items.map((i) => ({ ...i, included: true })));
-      setPortionMultiplier(1);
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to analyze meal photo. Check your API key.';
-      setScanError(message);
-    } finally {
-      setIsAnalyzing(false);
-    }
+    await runGeminiAnalysisForPhoto(capturedPhotoUrl, userNote);
   }
 
   function handleConfirmLogMeal() {
@@ -2243,22 +2296,36 @@ export default function App() {
               className="space-y-4"
             >
               <div className="rounded-[36px] bg-m3-surfaceContainer border border-white/[0.08] p-6">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <div>
                     <span className="text-xs font-mono uppercase tracking-widest text-m3-primary font-semibold block">
-                      Multimodal Food Vision
+                      Turbo Vision • Minimal Thinking
                     </span>
                     <h1 className="text-2xl font-display font-extrabold text-m3-cream tracking-tight mt-0.5">
                       Visual Plate Scanner
                     </h1>
                   </div>
-                  <button
-                    onClick={() => setQuickAddModalDate(todayKey)}
-                    className="px-3.5 py-2 rounded-full bg-m3-surfaceHigh text-m3-cream border border-white/[0.08] text-xs font-display font-bold flex items-center gap-1.5"
-                  >
-                    <Repeat className="w-3.5 h-3.5 text-m3-primary" />
-                    <span>Frequent</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setAutoScanOnCapture((v) => !v)}
+                      className={`px-3 py-2 rounded-full border text-xs font-display font-bold flex items-center gap-1.5 transition-colors ${
+                        autoScanOnCapture
+                          ? 'bg-m3-primaryContainer border-m3-primary/40 text-m3-onPrimaryContainer'
+                          : 'bg-m3-surfaceHigh border-white/[0.08] text-m3-sand'
+                      }`}
+                      title="Automatically start AI analysis as soon as a photo is captured"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-m3-primary" />
+                      <span>Instant: {autoScanOnCapture ? 'ON' : 'OFF'}</span>
+                    </button>
+                    <button
+                      onClick={() => setQuickAddModalDate(todayKey)}
+                      className="px-3.5 py-2 rounded-full bg-m3-surfaceHigh text-m3-cream border border-white/[0.08] text-xs font-display font-bold flex items-center gap-1.5"
+                    >
+                      <Repeat className="w-3.5 h-3.5 text-m3-primary" />
+                      <span>Frequent</span>
+                    </button>
+                  </div>
                 </div>
 
                 <input
@@ -2303,7 +2370,7 @@ export default function App() {
                       Capture Your Meal
                     </p>
                     <p className="text-xs text-m3-sand mb-6 max-w-xs mx-auto leading-relaxed">
-                      Keep the full plate or bowl in frame for accurate portion depth and calorie estimation.
+                      Keep the full plate or bowl in frame. Single-tile 720px compression and cached Flash routing deliver fast macro breakdowns.
                     </p>
                     <div className="flex gap-3 justify-center">
                       <button
@@ -2346,32 +2413,133 @@ export default function App() {
                       <label className="block text-xs font-bold text-m3-sand mb-1.5">
                         Optional Context Note (e.g. cooked in 1 tbsp ghee, double chicken)
                       </label>
-                      <input
-                        type="text"
-                        value={userNote}
-                        onChange={(e) => setUserNote(e.target.value)}
-                        placeholder="Add preparation details or hidden ingredients..."
-                        className="w-full px-4 py-3.5 rounded-full bg-m3-surfaceLow border border-white/[0.08] text-sm text-m3-cream placeholder-m3-muted focus:outline-none focus:border-m3-primary"
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={userNote}
+                          onChange={(e) => setUserNote(e.target.value)}
+                          placeholder="Add preparation details or hidden ingredients..."
+                          className="flex-1 px-4 py-3.5 rounded-full bg-m3-surfaceLow border border-white/[0.08] text-sm text-m3-cream placeholder-m3-muted focus:outline-none focus:border-m3-primary"
+                        />
+                        {analysisResult &&
+                          !isAnalyzing &&
+                          userNote.trim() !== lastAnalyzedNote && (
+                            <button
+                              onClick={handleRunGeminiAnalysis}
+                              className="px-4 py-3 rounded-full bg-m3-primary text-m3-surface font-display font-extrabold text-xs shrink-0 flex items-center gap-1.5 active:scale-95 transition-transform"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              Re-Run
+                            </button>
+                          )}
+                      </div>
                     </div>
 
-                    {!analysisResult && (
+                    {/* LIVE MULTI-STAGE VISION PROGRESS TRACKER */}
+                    {isAnalyzing && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="p-5 rounded-[28px] bg-m3-surfaceLow border border-m3-primary/35 space-y-3.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-9 h-9 rounded-2xl bg-m3-primaryContainer border border-m3-primary/35 flex items-center justify-center shrink-0">
+                              <Loader2 className="w-4 h-4 text-m3-primary animate-spin" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-display font-extrabold text-m3-cream truncate">
+                                {scanProgress.label}
+                              </p>
+                              <p className="text-xs font-mono text-m3-sand truncate">
+                                {scanProgress.detail || 'Streaming structured nutrition schema...'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className="text-base font-mono tabular-nums font-extrabold text-m3-primary block">
+                              {Math.round(scanProgress.percent)}%
+                            </span>
+                            <span className="text-[11px] font-mono tabular-nums text-m3-muted block">
+                              {(scanElapsedMs / 1000).toFixed(1)}s
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Smooth Animated Progress Bar */}
+                        <div className="w-full h-2.5 rounded-full bg-m3-surfaceContainer overflow-hidden border border-white/[0.05]">
+                          <motion.div
+                            className="h-full rounded-full bg-gradient-to-r from-m3-primary via-m3-primarySoft to-m3-amber"
+                            initial={{ width: '8%' }}
+                            animate={{ width: `${Math.max(8, Math.min(100, scanProgress.percent))}%` }}
+                            transition={{ duration: 0.2, ease: 'easeOut' }}
+                          />
+                        </div>
+
+                        {/* 4-Stage Pipeline Checklist */}
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          {[
+                            {
+                              id: 'compressing',
+                              title: scanProgress.payloadKb
+                                ? `Single-Tile (${scanProgress.payloadKb} KB)`
+                                : 'Single-Tile 720px',
+                              threshold: 10,
+                            },
+                            {
+                              id: 'connecting',
+                              title: scanProgress.activeModel
+                                ? scanProgress.activeModel.replace(/^gemini-/, '')
+                                : 'Fast Flash Route',
+                              threshold: 25,
+                            },
+                            {
+                              id: 'vision',
+                              title: 'Portion Geometry',
+                              threshold: 45,
+                            },
+                            {
+                              id: 'macros',
+                              title: 'Macro Synthesis',
+                              threshold: 82,
+                            },
+                          ].map((step) => {
+                            const done = scanProgress.percent >= step.threshold + 18;
+                            const active =
+                              !done && scanProgress.percent >= step.threshold - 5;
+                            return (
+                              <div
+                                key={step.id}
+                                className={`px-3 py-2 rounded-2xl border flex items-center gap-2 text-xs font-mono transition-colors ${
+                                  done
+                                    ? 'bg-m3-primaryContainer/55 border-m3-primary/30 text-m3-cream'
+                                    : active
+                                    ? 'bg-m3-surfaceHigh border-m3-primary/40 text-m3-primarySoft font-bold'
+                                    : 'bg-m3-surfaceContainer/60 border-white/[0.04] text-m3-muted'
+                                }`}
+                              >
+                                {done ? (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-m3-primary shrink-0" />
+                                ) : active ? (
+                                  <Loader2 className="w-3.5 h-3.5 text-m3-primary animate-spin shrink-0" />
+                                ) : (
+                                  <div className="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0" />
+                                )}
+                                <span className="truncate">{step.title}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {!analysisResult && !isAnalyzing && (
                       <button
                         onClick={handleRunGeminiAnalysis}
-                        disabled={isAnalyzing}
-                        className="w-full py-4 rounded-full bg-m3-primary hover:bg-m3-primarySoft disabled:opacity-60 text-m3-surface font-display font-extrabold text-base flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+                        className="w-full py-4 rounded-full bg-m3-primary hover:bg-m3-primarySoft text-m3-surface font-display font-extrabold text-base flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
                       >
-                        {isAnalyzing ? (
-                          <>
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                            Analyzing Portions & Macros...
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="w-5 h-5" />
-                            Calculate Calories & Macros
-                          </>
-                        )}
+                        <Sparkles className="w-5 h-5" />
+                        Calculate Calories & Macros
                       </button>
                     )}
                   </div>
@@ -2398,13 +2566,21 @@ export default function App() {
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-xs font-mono uppercase tracking-wider px-3 py-0.5 rounded-full bg-m3-primaryContainer text-m3-onPrimaryContainer border border-m3-primary/25 font-bold">
                           Score {analysisResult.healthScore}/100
                         </span>
                         <span className="text-xs font-mono uppercase tracking-wider px-3 py-0.5 rounded-full bg-m3-surfaceHigh text-m3-sand">
                           {analysisResult.confidence}
                         </span>
+                        {analysisResult.latencyMs !== undefined && (
+                          <span className="text-xs font-mono px-2.5 py-0.5 rounded-full bg-m3-surfaceLow border border-white/[0.07] text-m3-primarySoft">
+                            {(analysisResult.latencyMs / 1000).toFixed(1)}s
+                            {analysisResult.modelUsed
+                              ? ` • ${analysisResult.modelUsed.replace(/^gemini-/, '')}`
+                              : ''}
+                          </span>
+                        )}
                       </div>
                       <h3 className="text-xl font-display font-extrabold text-m3-cream mt-2">
                         {analysisResult.mealName}
