@@ -4,6 +4,18 @@ import type { GeminiMealAnalysis } from '../types';
 
 const STORAGE_KEY_API = 'calquest_gemini_api_key';
 
+/**
+ * Prioritized cascade of multimodal vision models.
+ * If gemini-3.8-flash returns 503 (High Demand / Overloaded) or 429,
+ * the service automatically fails over to the next available model.
+ */
+const MODEL_FAILOVER_CHAIN = [
+  'gemini-3.8-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-3.1-flash-lite',
+];
+
 function sanitizeApiKey(raw: string | undefined | null): string {
   if (!raw) return '';
   return raw.replace(/[\s"'`]+/g, '').trim();
@@ -119,24 +131,75 @@ function extractTextFromInteractionResponse(data: Record<string, unknown>): stri
       }
     }
   }
+  const outputs = data.outputs as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(outputs) && outputs.length > 0) {
+    const last = outputs[outputs.length - 1];
+    if (typeof last?.text === 'string') return last.text;
+  }
+  const candidates = data.candidates as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(candidates) && candidates.length > 0) {
+    const content = candidates[0]?.content as Record<string, unknown> | undefined;
+    const parts = content?.parts as Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(parts)) {
+      const textPart = parts.find((p) => typeof p?.text === 'string');
+      if (typeof textPart?.text === 'string') return textPart.text;
+    }
+  }
   return null;
 }
 
+function isRetryableOverloadError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes('503') ||
+    msg.includes('429') ||
+    msg.includes('404') ||
+    msg.includes('500') ||
+    msg.includes('overloaded') ||
+    msg.includes('high demand') ||
+    msg.includes('high in demand') ||
+    msg.includes('unavailable') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('not found')
+  );
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
- * Native Android HTTP bridge fallback using CapacitorHttp.
- * Bypasses Android WebView CORS restrictions that cause "TypeError: Failed to fetch".
+ * Primary call via Interactions API (/v1beta/interactions).
  */
-async function callInteractionsViaNativeHttp(
+async function callInteractionsSingleModel(
   apiKey: string,
-  payload: Record<string, unknown>
+  model: string,
+  basePayload: Omit<Record<string, unknown>, 'model'>
 ): Promise<string> {
+  const fullPayload = { ...basePayload, model };
+
+  if (!Capacitor.isNativePlatform()) {
+    try {
+      const client = new GoogleGenAI({ apiKey });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const interaction = await client.interactions.create(fullPayload as any);
+      if (interaction.output_text) {
+        return interaction.output_text;
+      }
+    } catch (sdkErr) {
+      if (isRetryableOverloadError(sdkErr)) {
+        throw sdkErr;
+      }
+    }
+  }
+
   const res = await CapacitorHttp.post({
     url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
     headers: {
       'Content-Type': 'application/json',
       'x-goog-api-key': apiKey,
     },
-    data: payload,
+    data: fullPayload,
   });
 
   const responseData =
@@ -148,14 +211,178 @@ async function callInteractionsViaNativeHttp(
       (typeof errObj?.message === 'string' && errObj.message) ||
       JSON.stringify(errObj) ||
       `HTTP ${res.status}`;
-    throw new Error(`API Error (${res.status}): ${msg}`);
+    throw new Error(`API Error (${res.status}) on ${model}: ${msg}`);
   }
 
   const outputText = extractTextFromInteractionResponse(responseData);
   if (!outputText) {
-    throw new Error('Model returned an empty response payload.');
+    throw new Error(`Empty response payload from ${model}.`);
   }
   return outputText;
+}
+
+/**
+ * Secondary endpoint failover if /v1beta/interactions itself is returning 503.
+ */
+async function callModelsEndpointFailover(
+  apiKey: string,
+  model: string,
+  promptText: string,
+  base64Image?: string,
+  mimeType?: string,
+  jsonSchema?: Record<string, unknown>
+): Promise<string> {
+  const parts: Array<Record<string, unknown>> = [{ text: promptText }];
+  if (base64Image) {
+    parts.push({
+      inlineData: {
+        mimeType: mimeType || 'image/jpeg',
+        data: base64Image,
+      },
+    });
+  }
+
+  const generationConfig: Record<string, unknown> = {};
+  if (jsonSchema) {
+    generationConfig.responseMimeType = 'application/json';
+    generationConfig.responseSchema = jsonSchema;
+  }
+
+  const res = await CapacitorHttp.post({
+    url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+      apiKey
+    )}`,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: {
+      contents: [{ role: 'user', parts }],
+      generationConfig,
+    },
+  });
+
+  const responseData =
+    typeof res.data === 'string' ? JSON.parse(res.data) : (res.data as Record<string, unknown>);
+
+  if (res.status < 200 || res.status >= 300) {
+    const errObj = (responseData?.error as Record<string, unknown>) || responseData;
+    const msg =
+      (typeof errObj?.message === 'string' && errObj.message) ||
+      JSON.stringify(errObj) ||
+      `HTTP ${res.status}`;
+    throw new Error(`API Error (${res.status}) on ${model}: ${msg}`);
+  }
+
+  const outputText = extractTextFromInteractionResponse(responseData);
+  if (!outputText) {
+    throw new Error(`Empty response from ${model}.`);
+  }
+  return outputText;
+}
+
+/**
+ * Queries the user's accessible Flash/Lite models dynamically when primary models return 503.
+ */
+async function discoverAvailableVisionModels(apiKey: string): Promise<string[]> {
+  try {
+    const res = await CapacitorHttp.get({
+      url: `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
+    });
+    if (res.status < 200 || res.status >= 300) return [];
+    const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+    const models = Array.isArray(data?.models) ? data.models : [];
+    const candidates: string[] = [];
+
+    for (const m of models) {
+      const rawName = typeof m?.name === 'string' ? m.name.replace(/^models\//, '') : '';
+      const methods: string[] = Array.isArray(m?.supportedGenerationMethods)
+        ? m.supportedGenerationMethods
+        : [];
+      if (
+        rawName &&
+        (rawName.includes('flash') || rawName.includes('gemma')) &&
+        !rawName.includes('tts') &&
+        !rawName.includes('image') &&
+        !rawName.includes('live') &&
+        !rawName.includes('embedding') &&
+        (methods.length === 0 || methods.includes('generateContent'))
+      ) {
+        candidates.push(rawName);
+      }
+    }
+
+    // Prioritize lite models first during high-demand 503 events since Lite pools have the most spare capacity
+    candidates.sort((a, b) => {
+      const aLite = a.includes('lite') ? 0 : 1;
+      const bLite = b.includes('lite') ? 0 : 1;
+      return aLite - bLite;
+    });
+
+    return candidates;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Executes a request across the automatic model & endpoint failover chain.
+ * If gemini-3.8-flash is experiencing 503 High Demand, it automatically routes
+ * to Flash-Lite / alternate Flash models so the user never gets blocked by 503s.
+ */
+async function executeWithResilientFailover(params: {
+  apiKey: string;
+  basePayload: Omit<Record<string, unknown>, 'model'>;
+  promptText: string;
+  base64Image?: string;
+  mimeType?: string;
+  jsonSchema?: Record<string, unknown>;
+}): Promise<{ text: string; modelUsed: string }> {
+  let lastError: unknown = null;
+
+  // Step 1: Try the primary Interactions API chain (gemini-3.8-flash -> gemini-3.5-flash-lite -> gemini-3.5-flash -> gemini-3.1-flash-lite)
+  for (const model of MODEL_FAILOVER_CHAIN) {
+    try {
+      const text = await callInteractionsSingleModel(params.apiKey, model, params.basePayload);
+      return { text, modelUsed: model };
+    } catch (err) {
+      lastError = err;
+      if (!isRetryableOverloadError(err)) {
+        throw err;
+      }
+      await sleep(250);
+    }
+  }
+
+  // Step 2: Dynamically discover available Flash / Lite models on the server and try both endpoints
+  const discoveredModels = await discoverAvailableVisionModels(params.apiKey);
+  const allCandidates = Array.from(new Set([...MODEL_FAILOVER_CHAIN, ...discoveredModels]));
+
+  for (const model of allCandidates) {
+    try {
+      const text = await callInteractionsSingleModel(params.apiKey, model, params.basePayload);
+      return { text, modelUsed: model };
+    } catch {
+      // Try alternate endpoint if Interactions endpoint is 503 overloaded for this model
+      try {
+        const text = await callModelsEndpointFailover(
+          params.apiKey,
+          model,
+          params.promptText,
+          params.base64Image,
+          params.mimeType,
+          params.jsonSchema
+        );
+        return { text, modelUsed: model };
+      } catch (err2) {
+        lastError = err2;
+      }
+    }
+    await sleep(300);
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Service is temporarily experiencing high demand (503). Please tap again in a few seconds.');
 }
 
 export async function testGeminiConnection(overrideKey?: string): Promise<{
@@ -173,49 +400,25 @@ export async function testGeminiConnection(overrideKey?: string): Promise<{
   }
 
   const start = Date.now();
-  const payload = {
-    model: 'gemini-3.8-flash',
-    input: 'Reply with the single word READY.',
-  };
-
   try {
-    if (Capacitor.isNativePlatform()) {
-      const text = await callInteractionsViaNativeHttp(apiKey, payload);
-      return {
-        ok: true,
-        message: `Connected (${text.slice(0, 24).trim()})`,
-        latencyMs: Date.now() - start,
-      };
-    }
-
-    const client = new GoogleGenAI({ apiKey });
-    const interaction = await client.interactions.create(payload);
+    const { modelUsed } = await executeWithResilientFailover({
+      apiKey,
+      basePayload: {
+        input: 'Reply with the single word READY.',
+      },
+      promptText: 'Reply with the single word READY.',
+    });
     return {
       ok: true,
-      message: `Connected (${(interaction.output_text || 'OK').slice(0, 24).trim()})`,
+      message: `Connected (${modelUsed})`,
       latencyMs: Date.now() - start,
     };
   } catch (err: unknown) {
-    try {
-      const text = await callInteractionsViaNativeHttp(apiKey, payload);
-      return {
-        ok: true,
-        message: `Connected via native HTTP (${text.slice(0, 24).trim()})`,
-        latencyMs: Date.now() - start,
-      };
-    } catch (fallbackErr: unknown) {
-      const msg =
-        fallbackErr instanceof Error
-          ? fallbackErr.message
-          : err instanceof Error
-          ? err.message
-          : String(err);
-      return {
-        ok: false,
-        message: msg,
-        latencyMs: Date.now() - start,
-      };
-    }
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : String(err),
+      latencyMs: Date.now() - start,
+    };
   }
 }
 
@@ -227,14 +430,13 @@ export async function analyzeFoodPhotoWithGemini(params: {
 }): Promise<GeminiMealAnalysis> {
   const apiKey = getStoredApiKey();
   if (!apiKey) {
-    throw new Error(
-      'Missing API Key. Please add your API key in the Settings tab first.'
-    );
+    throw new Error('Missing API Key. Please add your API key in the Settings tab first.');
   }
 
   const cleanBase64 = params.base64Data.replace(/^data:image\/[a-zA-Z+]+;base64,/, '').trim();
 
   const promptParts = [
+    'You are CalQuest, an expert visual nutritionist and fitness coach.',
     'Analyze this food photo and calculate its calories and macronutrients accurately.',
     'Estimate realistic portion sizes using visual cues such as plate size, utensils, bowl depth, or packaging.',
     'Include hidden calories such as cooking oils, sauces, dressings, or butter where visually or culinarily typical.',
@@ -248,14 +450,15 @@ export async function analyzeFoodPhotoWithGemini(params: {
     promptParts.push(`Note about this specific meal: ${params.userNote.trim()}`);
   }
 
-  const requestPayload = {
-    model: 'gemini-3.8-flash',
+  const promptText = promptParts.join('\n');
+
+  const basePayload = {
     system_instruction:
       'You are CalQuest, an expert visual nutritionist and fitness coach. Break down every meal photo into accurate item-level calorie and macronutrient estimates and return strictly valid JSON matching the requested schema.',
     input: [
       {
         type: 'text' as const,
-        text: promptParts.join('\n'),
+        text: promptText,
       },
       {
         type: 'image' as const,
@@ -270,27 +473,14 @@ export async function analyzeFoodPhotoWithGemini(params: {
     },
   };
 
-  let rawText: string | null = null;
-
-  if (Capacitor.isNativePlatform()) {
-    // On Android APK, use native CapacitorHttp directly to avoid WebView CORS "TypeError: Failed to fetch"
-    rawText = await callInteractionsViaNativeHttp(apiKey, requestPayload);
-  } else {
-    try {
-      const client = new GoogleGenAI({ apiKey });
-      const interaction = await client.interactions.create(requestPayload);
-      rawText = interaction.output_text || null;
-    } catch (sdkErr: unknown) {
-      // Fallback to CapacitorHttp if browser fetch fails
-      rawText = await callInteractionsViaNativeHttp(apiKey, requestPayload).catch(() => {
-        throw sdkErr;
-      });
-    }
-  }
-
-  if (!rawText) {
-    throw new Error('Empty response received from vision analysis. Please try snapping the photo again.');
-  }
+  const { text: rawText } = await executeWithResilientFailover({
+    apiKey,
+    basePayload,
+    promptText,
+    base64Image: cleanBase64,
+    mimeType: params.mimeType || 'image/jpeg',
+    jsonSchema: MEAL_ANALYSIS_SCHEMA,
+  });
 
   const cleanedJson = rawText
     .replace(/^```json\s*/i, '')
