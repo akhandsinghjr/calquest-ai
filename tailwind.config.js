@@ -3,19 +3,26 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
-      colors: {
-        brand: {
-          50: '#f0fdf4',
-          100: '#dcfce7',
-          400: '#4ade80',
-          500: '#22c55e',
-          600: '#16a34a',
-          700: '#15803d',
-        },
+      fontFamily: {
+        sans: ['"DM Sans"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        display: ['"Plus Jakarta Sans"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'monospace'],
       },
-      animation: {
-        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'bounce-short': 'bounce 0.8s ease-in-out 2',
+      colors: {
+        m3: {
+          bg: '#0B0D0E',
+          surfaceLow: '#111517',
+          surface: '#161B1E',
+          surfaceHigh: '#1D2428',
+          surfaceHighest: '#252E33',
+          primary: '#5EEAD4',
+          primaryContainer: '#0F2E2A',
+          onPrimaryContainer: '#99F6E4',
+          secondaryContainer: '#2B2211',
+          onSecondaryContainer: '#FDE68A',
+          tertiaryContainer: '#122533',
+          onTertiaryContainer: '#BAE6FD',
+        },
       },
     },
   },

@@ -1,98 +1,98 @@
 import type { Badge, DailyQuest, MealLog, UserGoals, UserState } from '../types';
 
-export const RANK_TITLES: { minLevel: number; title: string; badgeEmoji: string }[] = [
-  { minLevel: 1, title: 'Calorie Cadet', badgeEmoji: '🌱' },
-  { minLevel: 3, title: 'Macro Scout', badgeEmoji: '🧭' },
-  { minLevel: 5, title: 'Portion Paladin', badgeEmoji: '🛡️' },
-  { minLevel: 8, title: 'Nutri-Knight', badgeEmoji: '⚔️' },
-  { minLevel: 12, title: 'Metabolic Mage', badgeEmoji: '🔮' },
-  { minLevel: 16, title: 'Macro Grandmaster', badgeEmoji: '👑' },
-  { minLevel: 20, title: 'Metabolic Sovereign', badgeEmoji: '⚡' },
+export const RANK_TITLES: { minLevel: number; title: string; badgeIcon: string }[] = [
+  { minLevel: 1, title: 'Calorie Cadet', badgeIcon: 'sprout' },
+  { minLevel: 3, title: 'Macro Scout', badgeIcon: 'compass' },
+  { minLevel: 5, title: 'Portion Paladin', badgeIcon: 'shield' },
+  { minLevel: 8, title: 'Nutri-Knight', badgeIcon: 'swords' },
+  { minLevel: 12, title: 'Metabolic Mage', badgeIcon: 'sparkles' },
+  { minLevel: 16, title: 'Macro Grandmaster', badgeIcon: 'crown' },
+  { minLevel: 20, title: 'Metabolic Sovereign', badgeIcon: 'zap' },
 ];
 
 export const ALL_BADGES: Badge[] = [
   {
     id: 'first_snap',
-    title: 'First Snap',
-    description: 'Log your very first meal using camera food vision.',
-    icon: '📸',
+    title: 'First Scan',
+    description: 'Log your first meal using multimodal food vision.',
+    icon: 'camera',
     xpReward: 100,
   },
   {
     id: 'streak_3',
     title: '3-Day Spark',
     description: 'Maintain a 3-day meal logging streak.',
-    icon: '🔥',
+    icon: 'flame',
     xpReward: 150,
   },
   {
     id: 'streak_7',
-    title: '7-Day Inferno',
+    title: '7-Day Momentum',
     description: 'Maintain a full 7-day logging streak.',
-    icon: '🌋',
+    icon: 'zap',
     xpReward: 350,
   },
   {
     id: 'streak_14',
     title: 'Unstoppable Force',
     description: 'Reach a 14-day calorie tracking streak.',
-    icon: '☄️',
+    icon: 'shield',
     xpReward: 700,
   },
   {
     id: 'clean_eater',
     title: 'Clean Plate Club',
     description: 'Log a meal with a Health Score of 85 or higher.',
-    icon: '🥗',
+    icon: 'leaf',
     xpReward: 120,
   },
   {
     id: 'superfood_sage',
-    title: 'Superfood Sage',
+    title: 'Nutrient Density Sage',
     description: 'Log a meal with a near-perfect Health Score of 95+.',
-    icon: '🥑',
+    icon: 'sparkles',
     xpReward: 250,
   },
   {
     id: 'protein_power',
     title: 'Protein Powerhouse',
     description: 'Log a single meal packing at least 40g of protein.',
-    icon: '💪',
+    icon: 'dumbbell',
     xpReward: 150,
   },
   {
     id: 'daily_protein_hit',
     title: 'Anabolic Architect',
     description: 'Hit 100% of your daily protein target.',
-    icon: '🥩',
+    icon: 'award',
     xpReward: 200,
   },
   {
     id: 'bullseye_budget',
-    title: 'Calorie Bullseye',
-    description: 'Finish a day within ±10% of your daily calorie goal (min 3 meals).',
-    icon: '🎯',
+    title: 'Calorie Precision',
+    description: 'Finish a day within 10% of your daily calorie goal (min 3 meals).',
+    icon: 'target',
     xpReward: 250,
   },
   {
     id: 'fiber_friend',
     title: 'Fiber Champion',
     description: 'Log 25g+ of dietary fiber in a single day.',
-    icon: '🌾',
+    icon: 'wheat',
     xpReward: 150,
   },
   {
     id: 'meals_10',
     title: 'Dedicated Logger',
-    description: 'Snap and log 10 total meals.',
-    icon: '🏅',
+    description: 'Scan and log 10 total meals.',
+    icon: 'medal',
     xpReward: 250,
   },
   {
     id: 'meals_50',
     title: 'Master Tracker',
-    description: 'Snap and log 50 total meals.',
-    icon: '🏆',
+    description: 'Scan and log 50 total meals.',
+    icon: 'trophy',
     xpReward: 600,
   },
 ];
@@ -110,7 +110,7 @@ export function getLevelInfo(xp: number): {
   nextLevelXp: number;
   progressPercent: number;
   rankTitle: string;
-  rankEmoji: string;
+  rankIcon: string;
 } {
   let level = 1;
   let xpForNext = 250;
@@ -123,11 +123,11 @@ export function getLevelInfo(xp: number): {
   }
 
   let rankTitle = RANK_TITLES[0].title;
-  let rankEmoji = RANK_TITLES[0].badgeEmoji;
+  let rankIcon = RANK_TITLES[0].badgeIcon;
   for (const r of RANK_TITLES) {
     if (level >= r.minLevel) {
       rankTitle = r.title;
-      rankEmoji = r.badgeEmoji;
+      rankIcon = r.badgeIcon;
     }
   }
 
@@ -137,7 +137,7 @@ export function getLevelInfo(xp: number): {
     nextLevelXp: xpForNext,
     progressPercent: Math.min(100, Math.round((remainingXp / xpForNext) * 100)),
     rankTitle,
-    rankEmoji,
+    rankIcon,
   };
 }
 
@@ -229,23 +229,23 @@ export function computeDailyQuests(
   return [
     {
       id: 'quest_snap_3',
-      title: 'Triple Threat Logger',
-      description: 'Snap & log 3 meals or snacks today',
+      title: 'Triple Meal Cadence',
+      description: 'Scan and log 3 meals or snacks today',
       xpReward: 100,
       progress: Math.min(3, mealCount),
       target: 3,
       completed: mealCount >= 3,
-      icon: '📷',
+      icon: 'camera',
     },
     {
       id: 'quest_clean_meal',
-      title: 'Nutrient Hunter',
+      title: 'Nutrient Density',
       description: 'Log a meal with a Health Score of 75+',
       xpReward: 75,
       progress: Math.min(1, highHealthMeals),
       target: 1,
       completed: highHealthMeals >= 1,
-      icon: '🥦',
+      icon: 'leaf',
     },
     {
       id: 'quest_protein_goal',
@@ -255,19 +255,19 @@ export function computeDailyQuests(
       progress: Math.min(Math.round(goals.proteinGrams * 0.8), totalProtein),
       target: Math.round(goals.proteinGrams * 0.8),
       completed: totalProtein >= Math.round(goals.proteinGrams * 0.8),
-      icon: '⚡',
+      icon: 'zap',
     },
     {
       id: 'quest_calorie_zone',
-      title: 'Goldilocks Zone',
-      description: `Hit 80%–105% of your ${goals.dailyCalories} kcal target`,
+      title: 'Metabolic Target Zone',
+      description: `Hit 80%-105% of your ${goals.dailyCalories} kcal target`,
       xpReward: 150,
       progress: Math.min(goals.dailyCalories, totalCalories),
       target: goals.dailyCalories,
       completed:
         totalCalories >= goals.dailyCalories * 0.8 &&
         totalCalories <= goals.dailyCalories * 1.05,
-      icon: '🎯',
+      icon: 'target',
     },
   ];
 }

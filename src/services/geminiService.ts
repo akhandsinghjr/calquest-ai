@@ -50,7 +50,7 @@ const MEAL_ANALYSIS_SCHEMA = {
     },
     emoji: {
       type: 'string',
-      description: 'Single food emoji representing the meal (e.g. 🥗, 🍛, 🍔, 🍳).',
+      description: 'Short category label for the meal (e.g. "bowl", "plate", "salad", "protein", "beverage"). Do not use emojis.',
     },
     totalCalories: {
       type: 'number',
@@ -93,7 +93,7 @@ const MEAL_ANALYSIS_SCHEMA = {
     wittyFeedback: {
       type: 'string',
       description:
-        'Short, encouraging, gamified coach comment (1-2 sentences) praising good choices or giving a helpful nutrition tip.',
+        'Short, encouraging nutritionist insight (1-2 sentences) praising good choices or giving a helpful nutrition tip. Never include emojis.',
     },
     confidence: {
       type: 'string',
@@ -501,7 +501,7 @@ export async function analyzeFoodPhotoWithGemini(params: {
 
   return {
     mealName: parsed.mealName || 'Scanned Meal',
-    emoji: parsed.emoji || '🍽️',
+    emoji: 'utensils',
     totalCalories: Math.round(Number(parsed.totalCalories) || 0),
     macros: {
       proteinGrams: Math.round(Number(parsed.macros?.proteinGrams) || 0),

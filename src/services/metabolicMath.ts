@@ -13,12 +13,54 @@ import type { BiometricsProfile, MetabolicCalculationResult } from '../types';
  *    The Lancet, 378(9793), 826-837.
  * 4. Forbes, G. B. (1987). "Lean body mass-body fat interrelationships in humans."
  *    Nutrition Reviews, 45(8), 225-231.
- * 5. Helms, E. R., Aragon, A. A., & Fitschen, P. J. (2014). "Evidence-based recommendations for
+ * 5. Helms, E. R., Aragon, A. A., & Fitschen, P. J. (1914/2014). "Evidence-based recommendations for
  *    natural bodybuilding contest preparation: nutrition and supplementation." JISSN, 11(1), 20.
  * 6. Morton, R. W., et al. (2018). "A systematic review, meta-analysis and meta-regression of the
  *    effect of protein supplementation on resistance training-induced gains in muscle mass and
  *    strength in healthy adults." British Journal of Sports Medicine, 52(6), 376-384.
  */
+
+export const DEFAULT_BIOMETRICS: BiometricsProfile = {
+  sex: 'male',
+  age: 24,
+  heightCm: 176,
+  weightKg: 76,
+  targetWeightKg: 70,
+  targetTimelineWeeks: 12,
+  activityLevel: 'moderate',
+  resistanceTraining: true,
+};
+
+export const ACTIVITY_LABELS: Record<
+  BiometricsProfile['activityLevel'],
+  { label: string; desc: string; pal: number }
+> = {
+  sedentary: {
+    label: 'Sedentary',
+    desc: 'Desk job, minimal planned exercise (<4,000 steps/day)',
+    pal: 1.2,
+  },
+  light: {
+    label: 'Lightly Active',
+    desc: 'Light training 1-3 days/week or 6,000-8,000 steps/day',
+    pal: 1.375,
+  },
+  moderate: {
+    label: 'Moderately Active',
+    desc: 'Moderate training 3-5 days/week or 8,000-10,000 steps/day',
+    pal: 1.55,
+  },
+  very_active: {
+    label: 'Very Active',
+    desc: 'Hard training 6-7 days/week or active physical work',
+    pal: 1.725,
+  },
+  athlete: {
+    label: 'Athlete',
+    desc: 'Intense daily training + high non-exercise physical activity',
+    pal: 1.9,
+  },
+};
 
 export const ACTIVITY_MULTIPLIERS: {
   value: BiometricsProfile['activityLevel'];
@@ -36,19 +78,19 @@ export const ACTIVITY_MULTIPLIERS: {
     value: 'light',
     label: 'Lightly Active',
     pal: 1.375,
-    detail: 'Light training 1–3 days/week or 6,000–8,000 steps/day',
+    detail: 'Light training 1-3 days/week or 6,000-8,000 steps/day',
   },
   {
     value: 'moderate',
     label: 'Moderately Active',
     pal: 1.55,
-    detail: 'Moderate training 3–5 days/week or 8,000–10,000 steps/day',
+    detail: 'Moderate training 3-5 days/week or 8,000-10,000 steps/day',
   },
   {
     value: 'very_active',
     label: 'Very Active',
     pal: 1.725,
-    detail: 'Hard training 6–7 days/week or active physical job',
+    detail: 'Hard training 6-7 days/week or active physical job',
   },
   {
     value: 'athlete',
@@ -71,7 +113,6 @@ export function estimateBodyFatPercentage(
   const heightM = Math.max(1.2, heightCm / 100);
   const bmi = weightKg / (heightM * heightM);
   const sexFlag = sex === 'male' ? 1 : 0;
-  // Deurenberg et al., Br J Nutr (1991)
   const bf = 1.2 * bmi + 0.23 * age - 10.8 * sexFlag - 5.4;
   return Math.max(5, Math.min(55, Math.round(bf * 10) / 10));
 }
@@ -132,9 +173,6 @@ export function calculateScientificTargets(
   const BETA_TEF = 0.1;
   const HALL_EPSILON = 22;
 
-  // Required daily energy delta accounting for:
-  // (a) Tissue mobilization energy rate divided by (1 - beta_TEF)
-  // (b) Mean dynamic metabolic adaptation (0.5 * epsilon * deltaW) across the trajectory
   const tissueDailyDelta = (effectiveRho * deltaWeightKg) / (days * (1 - BETA_TEF));
   const adaptationDailyDelta = 0.5 * HALL_EPSILON * deltaWeightKg;
 
@@ -151,7 +189,6 @@ export function calculateScientificTargets(
   const actualDailyDelta = targetDailyCalories - Math.round(tdee0);
 
   // 4. Evidence-Based Macronutrient Prescription (Helms et al. 2014; Morton et al. 2018)
-  // Reference weight for protein: use target weight if overweight to avoid over-prescribing
   const refWeightForProtein = deltaWeightKg < 0 ? Math.min(W0, Wt * 1.08) : W0;
   const proteinPerKg = deltaWeightKg < -0.5 ? 2.0 : profile.resistanceTraining ? 1.8 : 1.6;
   const proteinGrams = Math.round(refWeightForProtein * proteinPerKg);

@@ -1,41 +1,59 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import confetti from 'canvas-confetti';
+import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
+import { Capacitor } from '@capacitor/core';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
+  Activity,
+  AlertCircle,
+  Apple,
   Award,
   Calculator,
   Camera,
   Check,
-  ChevronDown,
-  Download,
+  CheckCircle2,
+  ChevronRight,
+  Coffee,
+  Compass,
+  Crown,
+  Dumbbell,
+  Eye,
+  EyeOff,
   Flame,
-  History,
   Image as ImageIcon,
+  Info,
   KeyRound,
+  Leaf,
+  Loader2,
+  Medal,
+  Moon,
   Plus,
+  RefreshCw,
+  Scale,
   Settings,
   Shield,
+  Sliders,
   Sparkles,
+  Sprout,
+  Sun,
+  Swords,
+  Target,
   Trash2,
   Trophy,
-  Upload,
   Utensils,
+  Wheat,
+  Wifi,
   X,
   Zap,
 } from 'lucide-react';
-import { Capacitor } from '@capacitor/core';
 import type {
   Badge,
+  BiometricsProfile,
+  DetectedFoodItem,
   GeminiMealAnalysis,
   MealLog,
+  UserGoals,
   UserState,
 } from './types';
-import {
-  analyzeFoodPhotoWithGemini,
-  getStoredApiKey,
-  hasBuiltInApiKey,
-  setStoredApiKey,
-  testGeminiConnection,
-} from './services/geminiService';
 import {
   ALL_BADGES,
   calculateMealXp,
@@ -46,127 +64,134 @@ import {
   updateStreakOnLog,
 } from './services/gamification';
 import {
-  ACTIVITY_MULTIPLIERS,
+  analyzeFoodPhotoWithGemini,
+  getStoredApiKey,
+  hasBuiltInApiKey,
+  setStoredApiKey,
+  testGeminiConnection,
+} from './services/geminiService';
+import {
+  ACTIVITY_LABELS,
   calculateScientificTargets,
+  DEFAULT_BIOMETRICS,
 } from './services/metabolicMath';
 import {
-  capturePhotoFromNativeOrWeb,
-  readFileAsCapturedImage,
-  type CapturedImage,
-} from './utils/imageUtils';
-import { cn } from './utils/cn';
+  clearAllData,
+  loadMeals,
+  loadUserState,
+  saveMeals,
+  saveUserState,
+} from './services/storage';
 
-const STORAGE_KEY_STATE = 'calquest_user_state_v2';
-const STORAGE_KEY_MEALS = 'calquest_meals_v1';
+type NavTab = 'dashboard' | 'scan' | 'math' | 'quests' | 'settings';
 
-const DEFAULT_USER_STATE: UserState = {
-  xp: 0,
-  streakDays: 0,
-  longestStreak: 0,
-  lastLoggedDate: null,
-  streakFreezes: 1,
-  unlockedBadgeIds: [],
-  claimedQuestIdsByDate: {},
-  goals: {
-    dailyCalories: 2050,
-    proteinGrams: 150,
-    carbsGrams: 200,
-    fatGrams: 68,
-    fiberGrams: 29,
-  },
-  biometrics: {
-    sex: 'male',
-    age: 24,
-    heightCm: 176,
-    weightKg: 78,
-    targetWeightKg: 72,
-    targetTimelineWeeks: 12,
-    activityLevel: 'moderate',
-    resistanceTraining: true,
-  },
-  customPromptInstruction: '',
+const M3_SPRING = {
+  type: 'spring' as const,
+  stiffness: 380,
+  damping: 30,
+  mass: 0.8,
 };
 
-export function App() {
-  const [activeTab, setActiveTab] = useState<'today' | 'plan' | 'quests' | 'settings'>('today');
-  const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
-  const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
+const M3_SOFT_SPRING = {
+  type: 'spring' as const,
+  stiffness: 260,
+  damping: 28,
+};
 
-  const [userState, setUserState] = useState<UserState>(() => {
-    try {
-      const saved =
-        localStorage.getItem(STORAGE_KEY_STATE) ||
-        localStorage.getItem('calquest_user_state_v1');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return {
-          ...DEFAULT_USER_STATE,
-          ...parsed,
-          goals: { ...DEFAULT_USER_STATE.goals, ...(parsed.goals || {}) },
-          biometrics: { ...DEFAULT_USER_STATE.biometrics, ...(parsed.biometrics || {}) },
-        };
+function RenderVectorIcon({
+  name,
+  className = 'w-4 h-4',
+}: {
+  name: string;
+  className?: string;
+}) {
+  switch (name) {
+    case 'sprout':
+      return <Sprout className={className} />;
+    case 'compass':
+      return <Compass className={className} />;
+    case 'shield':
+      return <Shield className={className} />;
+    case 'swords':
+      return <Swords className={className} />;
+    case 'sparkles':
+      return <Sparkles className={className} />;
+    case 'crown':
+      return <Crown className={className} />;
+    case 'zap':
+      return <Zap className={className} />;
+    case 'camera':
+      return <Camera className={className} />;
+    case 'flame':
+      return <Flame className={className} />;
+    case 'leaf':
+      return <Leaf className={className} />;
+    case 'dumbbell':
+      return <Dumbbell className={className} />;
+    case 'award':
+      return <Award className={className} />;
+    case 'target':
+      return <Target className={className} />;
+    case 'wheat':
+      return <Wheat className={className} />;
+    case 'medal':
+      return <Medal className={className} />;
+    case 'trophy':
+      return <Trophy className={className} />;
+    case 'breakfast':
+      return <Coffee className={className} />;
+    case 'lunch':
+      return <Sun className={className} />;
+    case 'dinner':
+      return <Moon className={className} />;
+    case 'snack':
+      return <Apple className={className} />;
+    default:
+      return <Utensils className={className} />;
+  }
+}
+
+async function compressImageDataUrl(dataUrl: string, maxWidth = 1024): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxWidth / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
       }
-    } catch {
-      // ignore parse errors
-    }
-    return DEFAULT_USER_STATE;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
   });
+}
 
-  const [meals, setMeals] = useState<MealLog[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_MEALS);
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch {
-      // ignore parse errors
-    }
-    return [];
-  });
+export default function App() {
+  const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  const [meals, setMeals] = useState<MealLog[]>(() => loadMeals());
+  const [userState, setUserState] = useState<UserState>(() => loadUserState());
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(userState));
-    } catch (e) {
-      console.error('Failed to save user state:', e);
-    }
-  }, [userState]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_MEALS, JSON.stringify(meals));
-    } catch (e) {
-      console.error('Failed to save meals:', e);
-    }
-  }, [meals]);
-
-  // Scanner modal state
-  const [scannerOpen, setScannerOpen] = useState(false);
-  const [capturedImage, setCapturedImage] = useState<CapturedImage | null>(null);
-  const [mealType, setMealType] = useState<'breakfast' | 'lunch' | 'dinner' | 'snack'>(() => {
-    const hour = new Date().getHours();
-    if (hour < 11) return 'breakfast';
-    if (hour < 16) return 'lunch';
-    if (hour < 22) return 'dinner';
-    return 'snack';
-  });
-  const [userNote, setUserNote] = useState('');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [analysisResult, setAnalysisResult] = useState<GeminiMealAnalysis | null>(null);
-  const [portionMultiplier, setPortionMultiplier] = useState<number>(1);
-
-  // Toast notification
-  const [celebrationToast, setCelebrationToast] = useState<{
-    title: string;
-    subtitle: string;
-    xp: number;
-  } | null>(null);
-
-  // Settings state
-  const [apiKeyInput, setApiKeyInput] = useState(() => getStoredApiKey());
+  // Settings & API state
+  const [apiKeyInput, setApiKeyInput] = useState<string>(() => getStoredApiKey());
   const [showApiKey, setShowApiKey] = useState(false);
-  const [settingsSavedBanner, setSettingsSavedBanner] = useState(false);
+  const [goalsDraft, setGoalsDraft] = useState<UserGoals>(() => loadUserState().goals);
+  const [biometricsDraft, setBiometricsDraft] = useState<BiometricsProfile>(
+    () => loadUserState().biometrics || DEFAULT_BIOMETRICS
+  );
+  const [customPromptDraft, setCustomPromptDraft] = useState<string>(
+    () => loadUserState().customPromptInstruction
+  );
+  const [settingsSavedToast, setSettingsSavedToast] = useState(false);
+  const [mathAppliedToast, setMathAppliedToast] = useState(false);
+  const [showFormulaSheet, setShowFormulaSheet] = useState(false);
+
+  // API diagnostic state
   const [testingApi, setTestingApi] = useState(false);
   const [apiTestResult, setApiTestResult] = useState<{
     ok: boolean;
@@ -174,12 +199,41 @@ export function App() {
     latencyMs: number;
   } | null>(null);
 
-  const cameraFileInputRef = useRef<HTMLInputElement | null>(null);
-  const galleryFileInputRef = useRef<HTMLInputElement | null>(null);
-  const importJsonInputRef = useRef<HTMLInputElement | null>(null);
+  // Scan & AI analysis state
+  const [capturedPhotoUrl, setCapturedPhotoUrl] = useState<string | null>(null);
+  const [mealType, setMealType] = useState<'breakfast' | 'lunch' | 'dinner' | 'snack'>(() => {
+    const hour = new Date().getHours();
+    if (hour < 11) return 'breakfast';
+    if (hour < 15) return 'lunch';
+    if (hour < 18) return 'snack';
+    return 'dinner';
+  });
+  const [userNote, setUserNote] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [analysisResult, setAnalysisResult] = useState<GeminiMealAnalysis | null>(null);
+  const [portionMultiplier, setPortionMultiplier] = useState<number>(1);
+  const [editableItems, setEditableItems] = useState<DetectedFoodItem[]>([]);
+
+  // Celebration overlay
+  const [celebrationData, setCelebrationData] = useState<{
+    xpGained: number;
+    newBadges: Badge[];
+    leveledUp: boolean;
+    newLevel: number;
+  } | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    saveMeals(meals);
+  }, [meals]);
+
+  useEffect(() => {
+    saveUserState(userState);
+  }, [userState]);
 
   const todayKey = getLocalDateKey();
-
   const todayMeals = useMemo(
     () => meals.filter((m) => m.dateKey === todayKey),
     [meals, todayKey]
@@ -187,401 +241,275 @@ export function App() {
 
   const todayTotals = useMemo(() => {
     return todayMeals.reduce(
-      (acc, meal) => {
-        acc.calories += meal.totalCalories;
-        acc.protein += meal.macros.proteinGrams;
-        acc.carbs += meal.macros.carbsGrams;
-        acc.fat += meal.macros.fatGrams;
-        acc.fiber += meal.macros.fiberGrams;
-        return acc;
-      },
+      (acc, m) => ({
+        calories: acc.calories + m.totalCalories,
+        protein: acc.protein + m.macros.proteinGrams,
+        carbs: acc.carbs + m.macros.carbsGrams,
+        fat: acc.fat + m.macros.fatGrams,
+        fiber: acc.fiber + m.macros.fiberGrams,
+      }),
       { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 }
     );
   }, [todayMeals]);
 
   const levelInfo = useMemo(() => getLevelInfo(userState.xp), [userState.xp]);
-
   const dailyQuests = useMemo(
     () => computeDailyQuests(todayMeals, userState.goals),
     [todayMeals, userState.goals]
   );
 
-  const claimedTodaySet = useMemo(
-    () => new Set(userState.claimedQuestIdsByDate[todayKey] || []),
-    [userState.claimedQuestIdsByDate, todayKey]
-  );
-
-  // Scientific metabolic calculation result
-  const metabolicPlan = useMemo(
-    () => calculateScientificTargets(userState.biometrics),
-    [userState.biometrics]
+  const metabolicResult = useMemo(
+    () => calculateScientificTargets(biometricsDraft),
+    [biometricsDraft]
   );
 
   const adjustedAnalysis = useMemo(() => {
     if (!analysisResult) return null;
-    const includedItems = analysisResult.items.filter((i) => i.included !== false);
-    const hasItems = analysisResult.items.length > 0;
+    const includedItems = editableItems.filter((item) => item.included !== false);
+    const rawCal = includedItems.reduce((s, i) => s + i.calories, 0);
+    const rawProt = includedItems.reduce((s, i) => s + i.proteinGrams, 0);
+    const rawCarbs = includedItems.reduce((s, i) => s + i.carbsGrams, 0);
+    const rawFat = includedItems.reduce((s, i) => s + i.fatGrams, 0);
 
-    const rawCals = hasItems
-      ? includedItems.reduce((s, i) => s + i.calories, 0)
-      : analysisResult.totalCalories;
-    const rawProtein = hasItems
-      ? includedItems.reduce((s, i) => s + i.proteinGrams, 0)
-      : analysisResult.macros.proteinGrams;
-    const rawCarbs = hasItems
-      ? includedItems.reduce((s, i) => s + i.carbsGrams, 0)
-      : analysisResult.macros.carbsGrams;
-    const rawFat = hasItems
-      ? includedItems.reduce((s, i) => s + i.fatGrams, 0)
-      : analysisResult.macros.fatGrams;
+    const baseCal = rawCal > 0 ? rawCal : analysisResult.totalCalories;
+    const baseProt = rawProt > 0 ? rawProt : analysisResult.macros.proteinGrams;
+    const baseCarbs = rawCarbs > 0 ? rawCarbs : analysisResult.macros.carbsGrams;
+    const baseFat = rawFat > 0 ? rawFat : analysisResult.macros.fatGrams;
 
     return {
-      totalCalories: Math.round(rawCals * portionMultiplier),
+      totalCalories: Math.round(baseCal * portionMultiplier),
       macros: {
-        proteinGrams: Math.round(rawProtein * portionMultiplier),
-        carbsGrams: Math.round(rawCarbs * portionMultiplier),
-        fatGrams: Math.round(rawFat * portionMultiplier),
+        proteinGrams: Math.round(baseProt * portionMultiplier),
+        carbsGrams: Math.round(baseCarbs * portionMultiplier),
+        fatGrams: Math.round(baseFat * portionMultiplier),
         fiberGrams: Math.round(analysisResult.macros.fiberGrams * portionMultiplier),
       },
     };
-  }, [analysisResult, portionMultiplier]);
+  }, [analysisResult, editableItems, portionMultiplier]);
 
-  function triggerConfetti() {
+  const hasApiKeyConfigured = Boolean(getStoredApiKey());
+
+  async function handleTakePhoto(source: 'camera' | 'gallery') {
+    setScanError(null);
     try {
-      confetti({
-        particleCount: 60,
-        spread: 70,
-        origin: { y: 0.72 },
-      });
-    } catch {
-      // ignore
-    }
-  }
-
-  function showRewardToast(title: string, subtitle: string, xp: number) {
-    setCelebrationToast({ title, subtitle, xp });
-    setTimeout(() => {
-      setCelebrationToast((prev) => (prev?.title === title ? null : prev));
-    }, 3800);
-  }
-
-  async function handleStartCapture(mode: 'camera' | 'gallery') {
-    setAnalysisError(null);
-    if (Capacitor.isNativePlatform()) {
-      try {
-        const img = await capturePhotoFromNativeOrWeb(mode);
-        if (img) {
-          setCapturedImage(img);
+      if (Capacitor.isNativePlatform()) {
+        const photo = await CapCamera.getPhoto({
+          quality: 85,
+          allowEditing: false,
+          resultType: CameraResultType.DataUrl,
+          source: source === 'camera' ? CameraSource.Camera : CameraSource.Photos,
+        });
+        if (photo.dataUrl) {
+          const compressed = await compressImageDataUrl(photo.dataUrl);
+          setCapturedPhotoUrl(compressed);
           setAnalysisResult(null);
-          setPortionMultiplier(1);
-          setScannerOpen(true);
         }
-        return;
-      } catch (err) {
-        console.warn('Native camera fallback to file input:', err);
+      } else {
+        fileInputRef.current?.click();
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.toLowerCase().includes('cancel')) {
+        fileInputRef.current?.click();
       }
     }
-
-    if (mode === 'camera') {
-      cameraFileInputRef.current?.click();
-    } else {
-      galleryFileInputRef.current?.click();
-    }
   }
 
-  async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    e.target.value = '';
     if (!file) return;
-
-    try {
-      const img = await readFileAsCapturedImage(file);
-      setCapturedImage(img);
-      setAnalysisResult(null);
-      setAnalysisError(null);
-      setPortionMultiplier(1);
-      setScannerOpen(true);
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to load photo');
-    }
+    setScanError(null);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      if (typeof reader.result === 'string') {
+        const compressed = await compressImageDataUrl(reader.result);
+        setCapturedPhotoUrl(compressed);
+        setAnalysisResult(null);
+      }
+    };
+    reader.readAsDataURL(file);
   }
 
   async function handleRunGeminiAnalysis() {
-    if (!capturedImage) return;
+    if (!capturedPhotoUrl) return;
+    setScanError(null);
     setIsAnalyzing(true);
-    setAnalysisError(null);
-
     try {
+      const mimeMatch = capturedPhotoUrl.match(/^data:(image\/[a-zA-Z+]+);base64,/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+
       const result = await analyzeFoodPhotoWithGemini({
-        base64Data: capturedImage.base64Data,
-        mimeType: capturedImage.mimeType,
+        base64Data: capturedPhotoUrl,
+        mimeType,
         userNote,
         customInstruction: userState.customPromptInstruction,
       });
+
       setAnalysisResult(result);
+      setEditableItems(result.items.map((i) => ({ ...i, included: true })));
+      setPortionMultiplier(1);
     } catch (err: unknown) {
-      setAnalysisError(
-        err instanceof Error ? err.message : 'Failed to analyze meal photo.'
-      );
+      const message =
+        err instanceof Error ? err.message : 'Failed to analyze meal photo. Check your API key.';
+      setScanError(message);
     } finally {
       setIsAnalyzing(false);
     }
   }
 
-  function handleToggleDetectedItem(index: number) {
-    if (!analysisResult) return;
-    const nextItems = analysisResult.items.map((item, idx) =>
-      idx === index ? { ...item, included: item.included === false ? true : false } : item
-    );
-    setAnalysisResult({
-      ...analysisResult,
-      items: nextItems,
-    });
-  }
-
-  function handleSaveScannedMeal() {
+  function handleConfirmLogMeal() {
     if (!analysisResult || !adjustedAnalysis) return;
 
-    const xpBreakdown = calculateMealXp(analysisResult.healthScore);
+    const xpCalc = calculateMealXp(analysisResult.healthScore);
     const newMeal: MealLog = {
       id: `meal_${Date.now()}`,
       timestamp: new Date().toISOString(),
       dateKey: todayKey,
       mealType,
       mealName: analysisResult.mealName,
-      emoji: analysisResult.emoji,
+      emoji: 'utensils',
       totalCalories: adjustedAnalysis.totalCalories,
       macros: adjustedAnalysis.macros,
-      items: analysisResult.items.filter((i) => i.included !== false),
+      items: editableItems
+        .filter((i) => i.included !== false)
+        .map((i) => ({
+          ...i,
+          calories: Math.round(i.calories * portionMultiplier),
+          proteinGrams: Math.round(i.proteinGrams * portionMultiplier),
+          carbsGrams: Math.round(i.carbsGrams * portionMultiplier),
+          fatGrams: Math.round(i.fatGrams * portionMultiplier),
+        })),
       healthScore: analysisResult.healthScore,
       wittyFeedback: analysisResult.wittyFeedback,
       confidence: analysisResult.confidence,
-      photoDataUrl: capturedImage?.dataUrl,
-      xpEarned: xpBreakdown.totalXp,
+      photoDataUrl: capturedPhotoUrl || undefined,
+      xpEarned: xpCalc.totalXp,
       portionMultiplier,
       userNote: userNote.trim() || undefined,
     };
 
     const updatedMeals = [newMeal, ...meals];
     const updatedTodayMeals = [newMeal, ...todayMeals];
+    const streakInfo = updateStreakOnLog(userState, todayKey);
 
-    const streakUpdate = updateStreakOnLog(userState, todayKey);
-
-    const tempState: UserState = {
+    const tempStateForBadges: UserState = {
       ...userState,
-      streakDays: streakUpdate.streakDays,
-      longestStreak: streakUpdate.longestStreak,
-      streakFreezes: streakUpdate.streakFreezes,
+      streakDays: streakInfo.streakDays,
+      longestStreak: streakInfo.longestStreak,
+      streakFreezes: streakInfo.streakFreezes,
       lastLoggedDate: todayKey,
     };
 
-    const newBadges: Badge[] = evaluateNewlyUnlockedBadges(
+    const newlyUnlockedBadges = evaluateNewlyUnlockedBadges(
       updatedMeals,
       updatedTodayMeals,
-      tempState
+      tempStateForBadges
     );
-    const badgeBonusXp = newBadges.reduce((s, b) => s + b.xpReward, 0);
-    const totalXpGained = xpBreakdown.totalXp + badgeBonusXp;
+    const badgeBonusXp = newlyUnlockedBadges.reduce((s, b) => s + b.xpReward, 0);
+    const totalXpEarned = xpCalc.totalXp + badgeBonusXp;
+
+    const prevLevel = getLevelInfo(userState.xp).level;
+    const newTotalXp = userState.xp + totalXpEarned;
+    const newLevel = getLevelInfo(newTotalXp).level;
 
     setMeals(updatedMeals);
-    setUserState({
-      ...tempState,
-      xp: userState.xp + totalXpGained,
+    setUserState((prev) => ({
+      ...prev,
+      xp: newTotalXp,
+      streakDays: streakInfo.streakDays,
+      longestStreak: streakInfo.longestStreak,
+      streakFreezes: streakInfo.streakFreezes,
+      lastLoggedDate: todayKey,
       unlockedBadgeIds: [
-        ...userState.unlockedBadgeIds,
-        ...newBadges.map((b) => b.id),
+        ...prev.unlockedBadgeIds,
+        ...newlyUnlockedBadges.map((b) => b.id),
       ],
+    }));
+
+    setCelebrationData({
+      xpGained: totalXpEarned,
+      newBadges: newlyUnlockedBadges,
+      leveledUp: newLevel > prevLevel,
+      newLevel,
     });
 
-    setScannerOpen(false);
-    setCapturedImage(null);
+    setCapturedPhotoUrl(null);
     setAnalysisResult(null);
     setUserNote('');
-
-    triggerConfetti();
-
-    if (newBadges.length > 0) {
-      showRewardToast(
-        `Badge Unlocked: ${newBadges[0].icon} ${newBadges[0].title}`,
-        `Logged ${newMeal.mealName} (${newMeal.totalCalories} kcal)`,
-        totalXpGained
-      );
-    } else {
-      showRewardToast(
-        `${newMeal.emoji} ${newMeal.mealName} Logged`,
-        `Health Score ${newMeal.healthScore}/100 • ${streakUpdate.streakDays}d Streak`,
-        totalXpGained
-      );
-    }
+    setActiveTab('dashboard');
   }
 
-  function handleApplyScientificPlan() {
+  function handleClaimQuest(questId: string, xpReward: number) {
+    const claimedToday = userState.claimedQuestIdsByDate[todayKey] || [];
+    if (claimedToday.includes(questId)) return;
+
+    const prevLevel = getLevelInfo(userState.xp).level;
+    const newTotalXp = userState.xp + xpReward;
+    const newLevel = getLevelInfo(newTotalXp).level;
+
+    setUserState((prev) => ({
+      ...prev,
+      xp: newTotalXp,
+      claimedQuestIdsByDate: {
+        ...prev.claimedQuestIdsByDate,
+        [todayKey]: [...claimedToday, questId],
+      },
+    }));
+
+    setCelebrationData({
+      xpGained: xpReward,
+      newBadges: [],
+      leveledUp: newLevel > prevLevel,
+      newLevel,
+    });
+  }
+
+  function handleDeleteMeal(id: string) {
+    setMeals((prev) => prev.filter((m) => m.id !== id));
+  }
+
+  function handleApplyScientificTargets() {
+    const newGoals: UserGoals = {
+      dailyCalories: metabolicResult.targetDailyCalories,
+      proteinGrams: metabolicResult.recommendedMacros.proteinGrams,
+      carbsGrams: metabolicResult.recommendedMacros.carbsGrams,
+      fatGrams: metabolicResult.recommendedMacros.fatGrams,
+      fiberGrams: metabolicResult.recommendedMacros.fiberGrams,
+    };
+    setGoalsDraft(newGoals);
+    setUserState((prev) => ({
+      ...prev,
+      biometrics: biometricsDraft,
+      goals: newGoals,
+    }));
+    setMathAppliedToast(true);
+    setTimeout(() => setMathAppliedToast(false), 2600);
+  }
+
+  function handleSaveSettings() {
+    setStoredApiKey(apiKeyInput);
     setUserState((prev) => ({
       ...prev,
       goals: {
-        dailyCalories: metabolicPlan.targetDailyCalories,
-        proteinGrams: metabolicPlan.recommendedMacros.proteinGrams,
-        carbsGrams: metabolicPlan.recommendedMacros.carbsGrams,
-        fatGrams: metabolicPlan.recommendedMacros.fatGrams,
-        fiberGrams: metabolicPlan.recommendedMacros.fiberGrams,
+        dailyCalories: Math.max(800, Number(goalsDraft.dailyCalories) || 2100),
+        proteinGrams: Math.max(20, Number(goalsDraft.proteinGrams) || 140),
+        carbsGrams: Math.max(20, Number(goalsDraft.carbsGrams) || 220),
+        fatGrams: Math.max(15, Number(goalsDraft.fatGrams) || 70),
+        fiberGrams: Math.max(10, Number(goalsDraft.fiberGrams) || 30),
       },
+      customPromptInstruction: customPromptDraft,
     }));
-    showRewardToast(
-      'Scientific Targets Applied',
-      `${metabolicPlan.targetDailyCalories} kcal/day • P:${metabolicPlan.recommendedMacros.proteinGrams}g C:${metabolicPlan.recommendedMacros.carbsGrams}g F:${metabolicPlan.recommendedMacros.fatGrams}g`,
-      0
-    );
+    setSettingsSavedToast(true);
+    setTimeout(() => setSettingsSavedToast(false), 2500);
   }
 
-  function handleClaimQuest(questId: string, xpReward: number, title: string) {
-    if (claimedTodaySet.has(questId)) return;
-    const prevClaimed = userState.claimedQuestIdsByDate[todayKey] || [];
-    setUserState({
-      ...userState,
-      xp: userState.xp + xpReward,
-      claimedQuestIdsByDate: {
-        ...userState.claimedQuestIdsByDate,
-        [todayKey]: [...prevClaimed, questId],
-      },
-    });
-    triggerConfetti();
-    showRewardToast(`Quest Complete: ${title}`, 'Daily challenge bonus claimed', xpReward);
-  }
-
-  function handleDeleteMeal(mealId: string) {
-    setMeals((prev) => prev.filter((m) => m.id !== mealId));
-  }
-
-  function handleSaveSettings(e: React.FormEvent) {
-    e.preventDefault();
-    setStoredApiKey(apiKeyInput);
-    setSettingsSavedBanner(true);
-    setTimeout(() => setSettingsSavedBanner(false), 2500);
-  }
-
-  async function handleTestApiKey() {
-    setStoredApiKey(apiKeyInput);
+  async function handleTestApiConnection() {
     setTestingApi(true);
     setApiTestResult(null);
-    try {
-      const res = await testGeminiConnection(apiKeyInput);
-      setApiTestResult(res);
-    } finally {
-      setTestingApi(false);
-    }
-  }
-
-  function handleLoadDemoMealPhoto() {
-    // Generate a realistic illustrated sample meal plate on an HTML5 canvas (Grilled Salmon, Rice & Broccoli)
-    const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    // Dark table background
-    ctx.fillStyle = '#18181b';
-    ctx.fillRect(0, 0, 512, 512);
-
-    // White ceramic plate
-    ctx.fillStyle = '#f4f4f5';
-    ctx.beginPath();
-    ctx.arc(256, 256, 210, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#d4d4d8';
-    ctx.lineWidth = 8;
-    ctx.stroke();
-
-    // Steamed white rice mound (top left)
-    ctx.fillStyle = '#fafafa';
-    ctx.beginPath();
-    ctx.arc(190, 195, 72, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#e4e4e7';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Grilled salmon fillet (bottom)
-    ctx.fillStyle = '#fb7185';
-    ctx.beginPath();
-    ctx.roundRect(145, 285, 210, 85, 22);
-    ctx.fill();
-    // Grill marks on salmon
-    ctx.strokeStyle = '#9f1239';
-    ctx.lineWidth = 4;
-    for (let x = 175; x <= 325; x += 35) {
-      ctx.beginPath();
-      ctx.moveTo(x, 290);
-      ctx.lineTo(x - 15, 365);
-      ctx.stroke();
-    }
-
-    // Broccoli florets (top right)
-    const florets = [
-      [320, 175, 34],
-      [355, 205, 30],
-      [295, 220, 28],
-    ];
-    for (const [fx, fy, fr] of florets) {
-      ctx.fillStyle = '#16a34a';
-      ctx.beginPath();
-      ctx.arc(fx, fy, fr, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
-    const base64Data = dataUrl.replace(/^data:image\/[a-zA-Z+]+;base64,/, '');
-
-    setCapturedImage({
-      base64Data,
-      mimeType: 'image/jpeg',
-      dataUrl,
-    });
-    setUserNote('180g grilled salmon fillet, 1 cup steamed white rice, 100g steamed broccoli');
-    setAnalysisResult(null);
-    setAnalysisError(null);
-    setPortionMultiplier(1);
-    setScannerOpen(true);
-  }
-
-  function handleExportData() {
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      userState,
-      meals,
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `calquest-backup-${todayKey}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function handleImportData(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(reader.result as string);
-        if (data.userState && Array.isArray(data.meals)) {
-          setUserState({ ...DEFAULT_USER_STATE, ...data.userState });
-          setMeals(data.meals);
-          showRewardToast('Backup Restored', 'All meals, XP, and streaks loaded', 0);
-        } else {
-          alert('Invalid backup JSON file.');
-        }
-      } catch {
-        alert('Could not parse backup file.');
-      }
-    };
-    reader.readAsText(file);
+    setStoredApiKey(apiKeyInput);
+    const res = await testGeminiConnection(apiKeyInput);
+    setApiTestResult(res);
+    setTestingApi(false);
   }
 
   const caloriePercent = Math.min(
@@ -589,1529 +517,1607 @@ export function App() {
     Math.round((todayTotals.calories / Math.max(1, userState.goals.dailyCalories)) * 100)
   );
   const caloriesRemaining = userState.goals.dailyCalories - todayTotals.calories;
-  const ringRadius = 56;
-  const ringCircumference = 2 * Math.PI * ringRadius;
-  const ringOffset =
-    ringCircumference - (Math.min(100, caloriePercent) / 100) * ringCircumference;
 
-  const hasApiKeyConfigured = Boolean(getStoredApiKey());
+  // SVG Calorie Ring Geometry
+  const ringRadius = 60;
+  const ringCircumference = 2 * Math.PI * ringRadius;
+  const ringStrokeDashoffset =
+    ringCircumference - (caloriePercent / 100) * ringCircumference;
 
   return (
-    <div className="min-h-dvh bg-zinc-950 text-zinc-100 flex flex-col max-w-md mx-auto relative pb-24 border-x border-zinc-900">
-      {/* Hidden File Inputs */}
-      <input
-        ref={cameraFileInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={handleFileSelected}
-      />
-      <input
-        ref={galleryFileInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleFileSelected}
-      />
-      <input
-        ref={importJsonInputRef}
-        type="file"
-        accept="application/json"
-        className="hidden"
-        onChange={handleImportData}
+    <div className="min-h-[100dvh] bg-m3-surface text-slate-100 flex flex-col max-w-md mx-auto relative overflow-x-hidden selection:bg-emerald-500/30 border-x border-white/[0.04]">
+      {/* Subtle Material 3 Atmospheric Top Glow */}
+      <div
+        className="pointer-events-none fixed inset-x-0 top-0 h-72 max-w-md mx-auto z-0"
+        style={{
+          background:
+            'radial-gradient(ellipse 80% 50% at 50% -15%, rgba(16, 185, 129, 0.14), transparent 70%)',
+        }}
       />
 
-      {/* Toast Notification (fixed z-50 scale, no gradients) */}
-      {celebrationToast && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-sm bg-zinc-900 text-zinc-100 p-3.5 rounded-2xl shadow-xl border border-emerald-500/40 flex items-center justify-between gap-3 transition-transform duration-200 ease-out"
-        >
-          <div className="min-w-0">
-            <p className="font-bold text-sm text-balance truncate">{celebrationToast.title}</p>
-            <p className="text-xs text-zinc-400 text-pretty">{celebrationToast.subtitle}</p>
-          </div>
-          {celebrationToast.xp > 0 && (
-            <span className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-xl font-bold text-xs tabular-nums shrink-0">
-              +{celebrationToast.xp} XP
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Top Status Header (z-30) */}
-      <header className="sticky top-0 z-30 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800/80 px-4 py-3">
+      {/* TOP MATERIAL 3 EXPRESSIVE APP BAR */}
+      <header className="sticky top-0 z-30 backdrop-blur-2xl bg-m3-surface/85 border-b border-white/[0.06] px-4 pt-3 pb-3">
         <div className="flex items-center justify-between gap-3">
-          {/* Rank & XP */}
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-xl shrink-0">
-              {levelInfo.rankEmoji}
+            <div className="w-11 h-11 rounded-[18px] bg-m3-primaryContainer border border-emerald-400/20 flex items-center justify-center text-emerald-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]">
+              <RenderVectorIcon name={levelInfo.rankIcon} className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 tabular-nums">
-                  Lv.{levelInfo.level}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono tabular-nums uppercase tracking-widest px-2 py-0.5 rounded-full bg-m3-primaryContainer text-m3-onPrimaryContainer border border-emerald-400/20 font-semibold">
+                  LVL {levelInfo.level}
                 </span>
-                <span className="text-xs font-semibold text-zinc-200">
+                <span className="text-sm font-display font-bold text-slate-100 tracking-tight">
                   {levelInfo.rankTitle}
                 </span>
               </div>
-              <div className="w-32 h-1.5 bg-zinc-800 rounded-full overflow-hidden mt-1.5">
-                <div
-                  className="h-full bg-emerald-500 transition-all duration-300 ease-out"
-                  style={{ width: `${levelInfo.progressPercent}%` }}
+              <div className="w-36 h-1.5 bg-m3-surfaceHighest rounded-full overflow-hidden mt-1.5">
+                <motion.div
+                  className="h-full bg-emerald-400 rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${levelInfo.progressPercent}%` }}
+                  transition={M3_SOFT_SPRING}
                 />
               </div>
-              <p className="text-[10px] text-zinc-400 mt-0.5 tabular-nums">
+              <p className="text-[10px] font-mono tabular-nums text-slate-400 mt-0.5">
                 {levelInfo.currentLevelXp} / {levelInfo.nextLevelXp} XP
               </p>
             </div>
           </div>
 
-          {/* Streak & Shields + History Trigger */}
-          <div className="flex items-center gap-1.5">
-            <div
-              title="Streak Freeze Shields"
-              className="min-h-9 px-2.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center gap-1 text-xs font-semibold text-sky-400 tabular-nums"
-            >
-              <Shield className="w-3.5 h-3.5" />
-              <span>{userState.streakFreezes}</span>
+          {/* Streak Tonal Pill */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 bg-m3-surfaceContainer border border-white/[0.07] px-3.5 py-2 rounded-full shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+              <Flame
+                className={`w-4 h-4 ${
+                  userState.streakDays > 0
+                    ? 'text-amber-400'
+                    : 'text-slate-500'
+                }`}
+              />
+              <div className="leading-none">
+                <span className="text-xs font-mono tabular-nums font-semibold text-white">
+                  {userState.streakDays}d
+                </span>
+                <span className="text-[10px] text-slate-400 block">streak</span>
+              </div>
             </div>
-            <div
-              title="Active Daily Streak"
-              className="min-h-9 px-2.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center gap-1 text-xs font-bold text-amber-400 tabular-nums"
-            >
-              <Flame className="w-4 h-4 fill-amber-400/20" />
-              <span>{userState.streakDays}d</span>
-            </div>
-            <button
-              type="button"
-              aria-label="Open Meal History"
-              onClick={() => setShowHistoryDrawer(true)}
-              className="min-h-9 min-w-9 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 flex items-center justify-center text-zinc-300 active:scale-[0.98] transition-transform duration-150"
-            >
-              <History className="w-4 h-4" />
-            </button>
           </div>
         </div>
       </header>
 
-      {/* Missing API Key Banner */}
-      {!hasApiKeyConfigured && activeTab !== 'settings' && (
-        <div className="mx-4 mt-3 p-3.5 rounded-2xl bg-zinc-900 border border-amber-500/30 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 text-xs text-zinc-300">
-            <KeyRound className="w-4 h-4 text-amber-400 shrink-0" />
-            <span className="text-pretty">Add your API key in Settings to enable camera calorie scanning.</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setActiveTab('settings')}
-            className="min-h-9 px-3 rounded-xl bg-amber-500 text-zinc-950 font-semibold text-xs shrink-0 active:scale-[0.98] transition-transform duration-150"
+      {/* MAIN SCROLLABLE VIEWPORT */}
+      <main className="flex-1 px-4 pt-4 pb-28 relative z-10">
+        {!hasApiKeyConfigured && activeTab !== 'settings' && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={M3_SPRING}
+            className="mb-4 p-4 rounded-[24px] bg-m3-surfaceContainer border border-amber-400/25 flex items-center justify-between gap-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
           >
-            Setup
-          </button>
-        </div>
-      )}
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-400/25 flex items-center justify-center text-amber-300 shrink-0">
+                <KeyRound className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-display font-semibold text-slate-100">
+                  Configure API Key
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  Add your personal key in Settings to enable instant photo analysis.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className="px-3.5 py-2 rounded-full bg-amber-400 text-slate-950 text-xs font-display font-bold shrink-0 active:scale-95 transition-transform"
+            >
+              Setup
+            </button>
+          </motion.div>
+        )}
 
-      {/* Main Content */}
-      <main className="flex-1 px-4 pt-4 space-y-5">
-        {activeTab === 'today' && (
-          <>
-            {/* Calorie & Macro Card */}
-            <section className="bg-zinc-900 border border-zinc-800/90 rounded-3xl p-5 space-y-5">
-              <div className="flex items-center justify-between gap-5">
-                {/* Ring Gauge */}
-                <div className="relative w-36 h-36 flex items-center justify-center shrink-0">
-                  <svg className="w-full h-full -rotate-90" viewBox="0 0 136 136">
-                    <circle
-                      cx="68"
-                      cy="68"
-                      r={ringRadius}
-                      stroke="currentColor"
-                      strokeWidth="10"
-                      fill="transparent"
-                      className="text-zinc-800"
-                    />
-                    <circle
-                      cx="68"
-                      cy="68"
-                      r={ringRadius}
-                      stroke="currentColor"
-                      strokeWidth="10"
-                      strokeDasharray={ringCircumference}
-                      strokeDashoffset={ringOffset}
-                      strokeLinecap="round"
-                      fill="transparent"
-                      className={cn(
-                        'transition-all duration-300 ease-out',
-                        caloriesRemaining >= 0 ? 'text-emerald-500' : 'text-rose-500'
-                      )}
-                    />
-                  </svg>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                    <span className="text-2xl font-extrabold tracking-tight text-zinc-100 tabular-nums">
-                      {Math.abs(caloriesRemaining)}
+        <AnimatePresence mode="wait">
+          {/* TAB 1: DASHBOARD */}
+          {activeTab === 'dashboard' && (
+            <motion.div
+              key="dashboard"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={M3_SPRING}
+              className="space-y-4"
+            >
+              {/* MATERIAL 3 EXPRESSIVE HERO BENTO CONTAINER */}
+              <section className="rounded-[28px] bg-m3-surfaceContainer border border-white/[0.07] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] relative overflow-hidden">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 block">
+                      Daily Energy Ledger
                     </span>
-                    <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">
-                      {caloriesRemaining >= 0 ? 'kcal left' : 'kcal over'}
-                    </span>
-                    <span className="text-[11px] text-zinc-500 mt-0.5 tabular-nums">
-                      {todayTotals.calories} / {userState.goals.dailyCalories}
-                    </span>
+                    <h1 className="text-lg font-display font-bold text-white tracking-tight">
+                      Metabolic Balance
+                    </h1>
                   </div>
+                  <button
+                    onClick={() => setActiveTab('math')}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-medium px-3 py-1.5 rounded-full bg-m3-surfaceHigh hover:bg-m3-surfaceHighest text-slate-200 border border-white/[0.07] active:scale-95 transition-all"
+                  >
+                    <Calculator className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Body Math</span>
+                  </button>
                 </div>
 
-                {/* Macro Bars */}
-                <div className="flex-1 space-y-3">
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="font-semibold text-rose-400">Protein</span>
-                      <span className="text-zinc-400 tabular-nums">
-                        {todayTotals.protein}g / {userState.goals.proteinGrams}g
-                      </span>
-                    </div>
-                    <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-rose-500 rounded-full transition-all duration-300 ease-out"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            (todayTotals.protein / Math.max(1, userState.goals.proteinGrams)) * 100
-                          )}%`,
-                        }}
+                <div className="flex items-center gap-5">
+                  {/* Expressive Radial Calorie Gauge */}
+                  <div className="relative w-36 h-36 flex items-center justify-center shrink-0">
+                    <svg className="w-full h-full -rotate-90" viewBox="0 0 140 140">
+                      <circle
+                        cx="70"
+                        cy="70"
+                        r={ringRadius}
+                        stroke="rgba(255, 255, 255, 0.06)"
+                        strokeWidth="12"
+                        fill="transparent"
                       />
+                      <motion.circle
+                        cx="70"
+                        cy="70"
+                        r={ringRadius}
+                        stroke={caloriesRemaining >= 0 ? '#10b981' : '#f43f5e'}
+                        strokeWidth="12"
+                        strokeDasharray={ringCircumference}
+                        initial={{ strokeDashoffset: ringCircumference }}
+                        animate={{ strokeDashoffset: ringStrokeDashoffset }}
+                        transition={M3_SOFT_SPRING}
+                        strokeLinecap="round"
+                        fill="transparent"
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                      <span className="text-[10px] uppercase tracking-widest text-slate-400 font-medium">
+                        {caloriesRemaining >= 0 ? 'Remaining' : 'Over Target'}
+                      </span>
+                      <span className="text-2xl font-mono tabular-nums font-bold text-white tracking-tight mt-0.5">
+                        {Math.abs(caloriesRemaining)}
+                      </span>
+                      <span className="text-[10px] font-mono tabular-nums text-slate-400">
+                        of {userState.goals.dailyCalories} kcal
+                      </span>
                     </div>
                   </div>
 
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="font-semibold text-amber-400">Carbs</span>
-                      <span className="text-zinc-400 tabular-nums">
-                        {todayTotals.carbs}g / {userState.goals.carbsGrams}g
-                      </span>
-                    </div>
-                    <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-amber-500 rounded-full transition-all duration-300 ease-out"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            (todayTotals.carbs / Math.max(1, userState.goals.carbsGrams)) * 100
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="font-semibold text-sky-400">Fats</span>
-                      <span className="text-zinc-400 tabular-nums">
-                        {todayTotals.fat}g / {userState.goals.fatGrams}g
-                      </span>
-                    </div>
-                    <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-sky-500 rounded-full transition-all duration-300 ease-out"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            (todayTotals.fat / Math.max(1, userState.goals.fatGrams)) * 100
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="font-semibold text-emerald-400">Fiber</span>
-                      <span className="text-zinc-400 tabular-nums">
-                        {todayTotals.fiber}g / {userState.goals.fiberGrams || 28}g
-                      </span>
-                    </div>
-                    <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-emerald-500 rounded-full transition-all duration-300 ease-out"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            (todayTotals.fiber / Math.max(1, userState.goals.fiberGrams || 28)) *
-                              100
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Camera Action Row (min-h-11 touch targets, solid fills, no gradients) */}
-              <div className="pt-4 border-t border-zinc-800/80 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleStartCapture('camera')}
-                  className="flex-1 min-h-11 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-zinc-950 font-bold py-2.5 px-4 rounded-2xl flex items-center justify-center gap-2 transition-transform duration-150 ease-out"
-                >
-                  <Camera className="w-5 h-5" />
-                  <span>Snap Meal Photo</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label="Choose photo from gallery"
-                  onClick={() => handleStartCapture('gallery')}
-                  className="min-h-11 min-w-11 bg-zinc-800 hover:bg-zinc-700 active:scale-[0.98] text-zinc-200 font-semibold px-3 rounded-2xl flex items-center justify-center border border-zinc-700 transition-transform duration-150 ease-out"
-                >
-                  <ImageIcon className="w-5 h-5 text-emerald-400" />
-                </button>
-                <button
-                  type="button"
-                  title="Load a sample meal image to test scanning"
-                  onClick={handleLoadDemoMealPhoto}
-                  className="min-h-11 bg-zinc-800 hover:bg-zinc-700 active:scale-[0.98] text-zinc-300 text-xs font-bold px-3 rounded-2xl flex items-center justify-center border border-zinc-700 transition-transform duration-150 ease-out"
-                >
-                  Sample
-                </button>
-              </div>
-            </section>
-
-            {/* Daily Quests Strip */}
-            <section className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5 text-balance">
-                  <Zap className="w-4 h-4 text-amber-400" />
-                  Daily Quests
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('quests')}
-                  className="text-xs text-emerald-400 font-semibold hover:underline"
-                >
-                  All Badges
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {dailyQuests.slice(0, 2).map((q) => {
-                  const isClaimed = claimedTodaySet.has(q.id);
-                  return (
-                    <div
-                      key={q.id}
-                      className="bg-zinc-900 border border-zinc-800/90 rounded-2xl p-3.5 flex items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-center text-xl shrink-0">
-                          {q.icon}
+                  {/* Macro Distribution Bars */}
+                  <div className="flex-1 space-y-3">
+                    {[
+                      {
+                        label: 'Protein',
+                        current: todayTotals.protein,
+                        target: userState.goals.proteinGrams,
+                        barClass: 'bg-emerald-400',
+                        textClass: 'text-emerald-300',
+                      },
+                      {
+                        label: 'Carbohydrates',
+                        current: todayTotals.carbs,
+                        target: userState.goals.carbsGrams,
+                        barClass: 'bg-sky-400',
+                        textClass: 'text-sky-300',
+                      },
+                      {
+                        label: 'Dietary Fat',
+                        current: todayTotals.fat,
+                        target: userState.goals.fatGrams,
+                        barClass: 'bg-amber-400',
+                        textClass: 'text-amber-300',
+                      },
+                      {
+                        label: 'Fiber',
+                        current: todayTotals.fiber,
+                        target: userState.goals.fiberGrams,
+                        barClass: 'bg-teal-400',
+                        textClass: 'text-teal-300',
+                      },
+                    ].map((macro) => {
+                      const pct = Math.min(
+                        100,
+                        Math.round((macro.current / Math.max(1, macro.target)) * 100)
+                      );
+                      return (
+                        <div key={macro.label}>
+                          <div className="flex justify-between items-baseline text-xs mb-1">
+                            <span className="text-slate-300 font-medium">{macro.label}</span>
+                            <span className={`font-mono tabular-nums text-[11px] ${macro.textClass}`}>
+                              {macro.current}g{' '}
+                              <span className="text-slate-500">/ {macro.target}g</span>
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 bg-m3-surfaceLow rounded-full overflow-hidden">
+                            <motion.div
+                              className={`h-full ${macro.barClass} rounded-full`}
+                              initial={{ width: 0 }}
+                              animate={{ width: `${pct}%` }}
+                              transition={M3_SOFT_SPRING}
+                            />
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold text-zinc-100 text-balance">{q.title}</p>
-                          <p className="text-xs text-zinc-400 text-pretty">{q.description}</p>
-                        </div>
-                      </div>
-                      {isClaimed ? (
-                        <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1 px-2.5 py-1 bg-emerald-500/10 rounded-xl border border-emerald-500/20 shrink-0">
-                          <Check className="w-3.5 h-3.5" /> Done
-                        </span>
-                      ) : q.completed ? (
-                        <button
-                          type="button"
-                          onClick={() => handleClaimQuest(q.id, q.xpReward, q.title)}
-                          className="min-h-9 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs tabular-nums shrink-0 active:scale-[0.98] transition-transform duration-150"
-                        >
-                          Claim +{q.xpReward} XP
-                        </button>
-                      ) : (
-                        <span className="text-xs font-mono text-zinc-400 bg-zinc-950 border border-zinc-800 px-2.5 py-1 rounded-xl tabular-nums shrink-0">
-                          {q.progress}/{q.target}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* Today's Logged Meals */}
-            <section className="space-y-3">
-              <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5 text-balance">
-                <Utensils className="w-4 h-4 text-emerald-400" />
-                Today&apos;s Meals ({todayMeals.length})
-              </h2>
-
-              {todayMeals.length === 0 ? (
-                <div className="bg-zinc-900/50 border border-dashed border-zinc-800 rounded-3xl p-8 text-center space-y-2">
-                  <div className="text-3xl">🍱</div>
-                  <p className="text-sm font-semibold text-zinc-200 text-balance">
-                    No meals logged today
-                  </p>
-                  <p className="text-xs text-zinc-500 max-w-xs mx-auto text-pretty">
-                    Take a photo of your plate to log calories, macros, and daily XP.
-                  </p>
+                      );
+                    })}
+                  </div>
                 </div>
-              ) : (
-                <div className="space-y-2.5">
-                  {todayMeals.map((meal) => {
-                    const isExpanded = expandedMealId === meal.id;
+
+                {/* Secondary Metric Ledger Strip */}
+                <div className="mt-5 pt-3.5 border-t border-white/[0.06] grid grid-cols-3 gap-2">
+                  <div>
+                    <span className="text-[10px] uppercase tracking-wider text-slate-400 block">
+                      Consumed
+                    </span>
+                    <span className="text-sm font-mono tabular-nums font-semibold text-white">
+                      {todayTotals.calories} kcal
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase tracking-wider text-slate-400 block">
+                      Meals Logged
+                    </span>
+                    <span className="text-sm font-mono tabular-nums font-semibold text-white">
+                      {todayMeals.length} today
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] uppercase tracking-wider text-slate-400 block">
+                      Protection
+                    </span>
+                    <span className="text-sm font-mono tabular-nums font-semibold text-emerald-300">
+                      {userState.streakFreezes} shields
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              {/* PRIMARY EXPRESSIVE SCAN ACTION */}
+              <motion.button
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setActiveTab('scan')}
+                className="w-full p-4 rounded-[24px] bg-m3-primaryContainer hover:bg-emerald-900/60 border border-emerald-400/25 flex items-center justify-between shadow-[inset_0_1px_0_rgba(255,255,255,0.1)] transition-colors group"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-[18px] bg-emerald-400 text-slate-950 flex items-center justify-center shadow-sm">
+                    <Camera className="w-5 h-5" />
+                  </div>
+                  <div className="text-left">
+                    <h2 className="text-sm font-display font-bold text-white tracking-tight">
+                      Scan Meal Photo
+                    </h2>
+                    <p className="text-xs text-emerald-200/80">
+                      Multimodal portion & macronutrient breakdown (+50-100 XP)
+                    </p>
+                  </div>
+                </div>
+                <div className="w-8 h-8 rounded-full bg-white/[0.08] flex items-center justify-center text-emerald-200 group-hover:translate-x-0.5 transition-transform">
+                  <ChevronRight className="w-4 h-4" />
+                </div>
+              </motion.button>
+
+              {/* ACTIVE QUESTS COMPACT LEDGER */}
+              <section className="rounded-[26px] bg-m3-surfaceContainer border border-white/[0.07] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Target className="w-4 h-4 text-emerald-400" />
+                    <h2 className="text-xs font-display font-bold uppercase tracking-wider text-slate-200">
+                      Daily Objectives
+                    </h2>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('quests')}
+                    className="text-[11px] text-emerald-400 font-medium hover:underline"
+                  >
+                    All Ranks & Badges
+                  </button>
+                </div>
+
+                <div className="divide-y divide-white/[0.06]">
+                  {dailyQuests.map((q) => {
+                    const claimed = (
+                      userState.claimedQuestIdsByDate[todayKey] || []
+                    ).includes(q.id);
+                    const pct = Math.min(100, Math.round((q.progress / q.target) * 100));
                     return (
                       <div
-                        key={meal.id}
-                        className="bg-zinc-900 border border-zinc-800/90 rounded-2xl p-3.5 space-y-2.5"
+                        key={q.id}
+                        className="py-3 first:pt-1 last:pb-1 flex items-center justify-between gap-3"
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            {meal.photoDataUrl ? (
-                              <img
-                                src={meal.photoDataUrl}
-                                alt={meal.mealName}
-                                className="w-14 h-14 rounded-xl object-cover border border-zinc-800 shrink-0"
-                              />
-                            ) : (
-                              <div className="w-14 h-14 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-center text-2xl shrink-0">
-                                {meal.emoji}
-                              </div>
-                            )}
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-300">
-                                  {meal.mealType}
-                                </span>
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 tabular-nums">
-                                  +{meal.xpEarned} XP
-                                </span>
-                              </div>
-                              <h3 className="font-bold text-sm text-zinc-100 mt-1 truncate text-balance">
-                                {meal.emoji} {meal.mealName}
-                              </h3>
-                              <p className="text-xs text-zinc-400 tabular-nums">
-                                P: {meal.macros.proteinGrams}g • C: {meal.macros.carbsGrams}g • F:{' '}
-                                {meal.macros.fatGrams}g
-                              </p>
-                            </div>
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div
+                            className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
+                              q.completed
+                                ? 'bg-m3-primaryContainer border-emerald-400/30 text-emerald-300'
+                                : 'bg-m3-surfaceHigh border-white/[0.06] text-slate-400'
+                            }`}
+                          >
+                            <RenderVectorIcon name={q.icon} className="w-4 h-4" />
                           </div>
-
-                          <div className="text-right shrink-0">
-                            <span className="text-base font-extrabold text-emerald-400 tabular-nums">
-                              {meal.totalCalories}
-                            </span>
-                            <span className="block text-[10px] text-zinc-500 uppercase">kcal</span>
-                            <div className="flex items-center justify-end gap-1 mt-1">
-                              <button
-                                type="button"
-                                aria-label="Toggle item breakdown"
-                                onClick={() => setExpandedMealId(isExpanded ? null : meal.id)}
-                                className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-                              >
-                                <ChevronDown
-                                  className={cn(
-                                    'w-4 h-4 transition-transform duration-150',
-                                    isExpanded && 'rotate-180'
-                                  )}
-                                />
-                              </button>
-                              <button
-                                type="button"
-                                aria-label="Delete meal"
-                                onClick={() => handleDeleteMeal(meal.id)}
-                                className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-400 hover:bg-zinc-800"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs font-display font-semibold text-white truncate">
+                                {q.title}
+                              </p>
+                              <span className="text-[10px] font-mono tabular-nums text-emerald-400 shrink-0">
+                                +{q.xpReward} XP
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-400 truncate">
+                              {q.description}
+                            </p>
+                            <div className="w-full h-1 bg-m3-surfaceLow rounded-full overflow-hidden mt-1.5">
+                              <motion.div
+                                className="h-full bg-emerald-400 rounded-full"
+                                initial={{ width: 0 }}
+                                animate={{ width: `${pct}%` }}
+                                transition={M3_SOFT_SPRING}
+                              />
                             </div>
                           </div>
                         </div>
 
-                        {meal.wittyFeedback && (
-                          <p className="text-xs text-zinc-300 bg-zinc-950/70 px-3 py-2 rounded-xl border border-zinc-800/80 text-pretty">
-                            {meal.wittyFeedback}
-                          </p>
-                        )}
-
-                        {isExpanded && meal.items.length > 0 && (
-                          <div className="pt-2 border-t border-zinc-800/80 space-y-1">
-                            <p className="text-[11px] font-semibold text-zinc-400">
-                              Itemized Breakdown
-                            </p>
-                            {meal.items.map((item, idx) => (
-                              <div
-                                key={idx}
-                                className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-zinc-950/50"
-                              >
-                                <span className="text-zinc-300">
-                                  {item.name}{' '}
-                                  <span className="text-zinc-500">({item.portionEstimate})</span>
-                                </span>
-                                <span className="font-semibold text-zinc-200 tabular-nums">
-                                  {item.calories} kcal
-                                </span>
-                              </div>
-                            ))}
-                          </div>
+                        {q.completed && !claimed ? (
+                          <button
+                            onClick={() => handleClaimQuest(q.id, q.xpReward)}
+                            className="px-3 py-1.5 rounded-full bg-emerald-400 text-slate-950 font-display font-bold text-[11px] shrink-0 active:scale-95 transition-transform"
+                          >
+                            Claim
+                          </button>
+                        ) : claimed ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-mono text-emerald-400 shrink-0">
+                            <Check className="w-3.5 h-3.5" /> Done
+                          </span>
+                        ) : (
+                          <span className="text-[11px] font-mono tabular-nums text-slate-400 shrink-0">
+                            {q.progress}/{q.target}
+                          </span>
                         )}
                       </div>
                     );
                   })}
                 </div>
-              )}
-            </section>
-          </>
-        )}
+              </section>
 
-        {/* SCIENTIFIC METABOLIC CALCULATOR TAB */}
-        {activeTab === 'plan' && (
-          <div className="space-y-4">
-            <div className="bg-zinc-900 border border-zinc-800/90 rounded-3xl p-5 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">
-                    Dynamic Energy Balance Model
+              {/* TODAY'S LOGGED MEALS */}
+              <section className="space-y-2.5">
+                <div className="flex items-center justify-between px-1">
+                  <h2 className="text-xs font-display font-bold uppercase tracking-wider text-slate-300">
+                    Logged Meals ({todayMeals.length})
+                  </h2>
+                  <span className="text-[11px] font-mono tabular-nums text-slate-400">
+                    {todayKey}
                   </span>
-                  <h1 className="text-lg font-extrabold text-zinc-100 mt-0.5 text-balance">
-                    Scientific Calorie &amp; Macro Calculator
-                  </h1>
-                  <p className="text-xs text-zinc-400 mt-1 text-pretty">
-                    Combines Mifflin-St Jeor (1990) / Katch-McArdle RMR, Forbes (1987) tissue
-                    partitioning, Hall et al. (Lancet, 2011) metabolic adaptation, and Morton et al.
-                    (2018) protein synthesis targets.
-                  </p>
                 </div>
+
+                {todayMeals.length === 0 ? (
+                  <div className="rounded-[26px] bg-m3-surfaceContainer border border-white/[0.06] p-8 text-center">
+                    <div className="w-12 h-12 rounded-2xl bg-m3-surfaceHigh border border-white/[0.07] flex items-center justify-center mx-auto mb-3 text-slate-400">
+                      <Utensils className="w-5 h-5" />
+                    </div>
+                    <p className="text-sm font-display font-semibold text-slate-200">
+                      No meals logged yet today
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
+                      Capture a photo of your plate or drink to compute itemized calories and macros.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {todayMeals.map((meal) => (
+                      <motion.div
+                        key={meal.id}
+                        layout
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="rounded-[24px] bg-m3-surfaceContainer border border-white/[0.07] p-3.5 flex gap-3.5 items-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                      >
+                        {meal.photoDataUrl ? (
+                          <img
+                            src={meal.photoDataUrl}
+                            alt={meal.mealName}
+                            className="w-16 h-16 rounded-[18px] object-cover shrink-0 border border-white/[0.08]"
+                          />
+                        ) : (
+                          <div className="w-16 h-16 rounded-[18px] bg-m3-surfaceHigh flex items-center justify-center text-emerald-300 shrink-0 border border-white/[0.07]">
+                            <RenderVectorIcon name={meal.mealType} className="w-6 h-6" />
+                          </div>
+                        )}
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-m3-surfaceHigh text-slate-300 font-medium">
+                              {meal.mealType}
+                            </span>
+                            <span className="text-[10px] font-mono tabular-nums text-emerald-400">
+                              Score {meal.healthScore}
+                            </span>
+                          </div>
+                          <h3 className="text-sm font-display font-bold text-white truncate mt-1">
+                            {meal.mealName}
+                          </h3>
+                          <div className="flex items-center gap-3 mt-1 text-[11px] font-mono tabular-nums">
+                            <span className="text-white font-semibold">
+                              {meal.totalCalories} kcal
+                            </span>
+                            <span className="text-emerald-300">P {meal.macros.proteinGrams}g</span>
+                            <span className="text-sky-300">C {meal.macros.carbsGrams}g</span>
+                            <span className="text-amber-300">F {meal.macros.fatGrams}g</span>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleDeleteMeal(meal.id)}
+                          className="p-2 text-slate-500 hover:text-rose-400 transition-colors"
+                          title="Delete meal"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </motion.div>
+          )}
+
+          {/* TAB 2: SCAN & MULTIMODAL VISION */}
+          {activeTab === 'scan' && (
+            <motion.div
+              key="scan"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={M3_SPRING}
+              className="space-y-4"
+            >
+              <div className="rounded-[28px] bg-m3-surfaceContainer border border-white/[0.07] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 block">
+                  Multimodal Food Vision
+                </span>
+                <h1 className="text-lg font-display font-bold text-white tracking-tight mt-0.5">
+                  Visual Calorie & Macro Analyzer
+                </h1>
+                <p className="text-xs text-slate-400 mt-1">
+                  Snap a meal photo or choose from your gallery for itemized portion and nutrition analysis.
+                </p>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleFileInputChange}
+                  className="hidden"
+                />
+
+                {/* Segmented Meal Type Bar with Shared Spring Pill */}
+                <div className="grid grid-cols-4 gap-1.5 mt-4 p-1 rounded-2xl bg-m3-surfaceLow border border-white/[0.05]">
+                  {(['breakfast', 'lunch', 'dinner', 'snack'] as const).map((type) => {
+                    const active = mealType === type;
+                    return (
+                      <button
+                        key={type}
+                        onClick={() => setMealType(type)}
+                        className={`relative py-2 rounded-xl text-xs font-display font-semibold capitalize transition-colors z-10 flex items-center justify-center gap-1.5 ${
+                          active ? 'text-slate-950' : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {active && (
+                          <motion.div
+                            layoutId="m3-meal-type-pill"
+                            transition={M3_SPRING}
+                            className="absolute inset-0 rounded-xl bg-emerald-400 -z-10"
+                          />
+                        )}
+                        <RenderVectorIcon name={type} className="w-3.5 h-3.5" />
+                        <span>{type}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Camera / Image Preview Frame */}
+                {!capturedPhotoUrl ? (
+                  <div className="mt-4 border border-dashed border-white/[0.14] rounded-[24px] p-7 text-center bg-m3-surfaceLow">
+                    <div className="w-14 h-14 rounded-[20px] bg-m3-primaryContainer border border-emerald-400/25 flex items-center justify-center mx-auto mb-3 text-emerald-300">
+                      <Camera className="w-6 h-6" />
+                    </div>
+                    <p className="text-sm font-display font-semibold text-slate-200 mb-1">
+                      Capture Your Plate
+                    </p>
+                    <p className="text-xs text-slate-400 mb-5 max-w-xs mx-auto">
+                      Keep the entire plate or nutrition label clearly visible for optimal portion depth estimation.
+                    </p>
+                    <div className="flex gap-2.5 justify-center">
+                      <button
+                        onClick={() => handleTakePhoto('camera')}
+                        className="px-4 py-2.5 rounded-full bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-display font-bold text-xs flex items-center gap-2 active:scale-95 transition-all"
+                      >
+                        <Camera className="w-4 h-4" />
+                        Open Camera
+                      </button>
+                      <button
+                        onClick={() => handleTakePhoto('gallery')}
+                        className="px-4 py-2.5 rounded-full bg-m3-surfaceHigh hover:bg-m3-surfaceHighest text-slate-200 border border-white/[0.08] font-display font-semibold text-xs flex items-center gap-2 active:scale-95 transition-all"
+                      >
+                        <ImageIcon className="w-4 h-4" />
+                        Gallery
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-3">
+                    <div className="relative rounded-[22px] overflow-hidden border border-white/[0.1] bg-black">
+                      <img
+                        src={capturedPhotoUrl}
+                        alt="Captured meal"
+                        className="w-full max-h-64 object-cover"
+                      />
+                      <button
+                        onClick={() => {
+                          setCapturedPhotoUrl(null);
+                          setAnalysisResult(null);
+                          setScanError(null);
+                        }}
+                        className="absolute top-3 right-3 p-2 rounded-full bg-black/70 text-white hover:bg-black border border-white/10"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                        Optional Context Note (e.g. cooked in 1 tbsp olive oil, air-fried)
+                      </label>
+                      <input
+                        type="text"
+                        value={userNote}
+                        onChange={(e) => setUserNote(e.target.value)}
+                        placeholder="Add preparation details or hidden ingredients..."
+                        className="w-full px-3.5 py-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400"
+                      />
+                    </div>
+
+                    {!analysisResult && (
+                      <button
+                        onClick={handleRunGeminiAnalysis}
+                        disabled={isAnalyzing}
+                        className="w-full py-3.5 rounded-full bg-emerald-400 hover:bg-emerald-300 disabled:opacity-60 text-slate-950 font-display font-bold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+                      >
+                        {isAnalyzing ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Analyzing Portions & Macros...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-4 h-4" />
+                            Calculate Calories & Macros
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {scanError && (
+                  <div className="mt-4 p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-2.5 text-rose-200 text-xs">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-display font-semibold">Analysis Error</p>
+                      <p className="text-rose-300/90 mt-0.5">{scanError}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Biometric Inputs Grid */}
-              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-zinc-800/80">
-                <div className="col-span-2 grid grid-cols-2 gap-2 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
-                  {(['male', 'female'] as const).map((sexVal) => (
-                    <button
-                      key={sexVal}
-                      type="button"
-                      onClick={() =>
-                        setUserState((s) => ({
-                          ...s,
-                          biometrics: { ...s.biometrics, sex: sexVal },
-                        }))
-                      }
-                      className={cn(
-                        'min-h-10 rounded-lg text-xs font-bold capitalize transition-colors duration-150',
-                        userState.biometrics.sex === sexVal
-                          ? 'bg-zinc-800 text-zinc-100'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      )}
+              {/* AI STRUCTURED BREAKDOWN CARD */}
+              {analysisResult && adjustedAnalysis && (
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={M3_SPRING}
+                  className="rounded-[28px] bg-m3-surfaceContainer border border-emerald-400/25 p-5 space-y-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-[18px] bg-m3-primaryContainer border border-emerald-400/25 flex items-center justify-center text-emerald-300 shrink-0">
+                        <Utensils className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-m3-primaryContainer text-m3-onPrimaryContainer border border-emerald-400/20">
+                            Health Score {analysisResult.healthScore}/100
+                          </span>
+                          <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-m3-surfaceHigh text-slate-300">
+                            {analysisResult.confidence} confidence
+                          </span>
+                        </div>
+                        <h3 className="text-base font-display font-bold text-white mt-1">
+                          {analysisResult.mealName}
+                        </h3>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-2xl font-mono tabular-nums font-bold text-emerald-400">
+                        {adjustedAnalysis.totalCalories}
+                      </span>
+                      <span className="text-[10px] font-mono uppercase text-slate-400 block">
+                        kcal
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Nutritionist Feedback */}
+                  <div className="p-3.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.06] text-xs text-slate-300 leading-relaxed">
+                    {analysisResult.wittyFeedback}
+                  </div>
+
+                  {/* Macro Summary Strip */}
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      {
+                        label: 'Protein',
+                        val: `${adjustedAnalysis.macros.proteinGrams}g`,
+                        color: 'text-emerald-300',
+                      },
+                      {
+                        label: 'Carbs',
+                        val: `${adjustedAnalysis.macros.carbsGrams}g`,
+                        color: 'text-sky-300',
+                      },
+                      {
+                        label: 'Fat',
+                        val: `${adjustedAnalysis.macros.fatGrams}g`,
+                        color: 'text-amber-300',
+                      },
+                      {
+                        label: 'Fiber',
+                        val: `${adjustedAnalysis.macros.fiberGrams}g`,
+                        color: 'text-teal-300',
+                      },
+                    ].map((m) => (
+                      <div
+                        key={m.label}
+                        className="p-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.05] text-center"
+                      >
+                        <span className="text-[10px] text-slate-400 block">{m.label}</span>
+                        <span className={`text-sm font-mono tabular-nums font-bold ${m.color}`}>
+                          {m.val}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Portion Multiplier Control */}
+                  <div className="p-3.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.05]">
+                    <div className="flex justify-between text-xs mb-2">
+                      <span className="text-slate-300 font-medium">Portion Scale</span>
+                      <span className="font-mono tabular-nums text-emerald-400 font-bold">
+                        {Math.round(portionMultiplier * 100)}% ({portionMultiplier}x)
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="2.0"
+                      step="0.25"
+                      value={portionMultiplier}
+                      onChange={(e) => setPortionMultiplier( parseFloat(e.target.value) )}
+                      className="w-full accent-emerald-400"
+                    />
+                    <div className="flex justify-between text-[10px] font-mono text-slate-500 mt-1">
+                      <span>0.5x</span>
+                      <span>1.0x</span>
+                      <span>1.5x</span>
+                      <span>2.0x</span>
+                    </div>
+                  </div>
+
+                  {/* Itemized Food Components Ledger (divide-y instead of boxy bloat) */}
+                  <div>
+                    <p className="text-[11px] font-display font-bold uppercase tracking-wider text-slate-400 mb-2">
+                      Detected Components (Tap to toggle)
+                    </p>
+                    <div className="rounded-2xl bg-m3-surfaceLow border border-white/[0.06] divide-y divide-white/[0.06] overflow-hidden">
+                      {editableItems.map((item, idx) => {
+                        const included = item.included !== false;
+                        return (
+                          <button
+                            key={idx}
+                            onClick={() =>
+                              setEditableItems((prev) =>
+                                prev.map((it, i) =>
+                                  i === idx ? { ...it, included: !included } : it
+                                )
+                              )
+                            }
+                            className={`w-full px-3.5 py-2.5 flex items-center justify-between text-left transition-opacity ${
+                              included ? 'opacity-100' : 'opacity-40'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div
+                                className={`w-4 h-4 rounded-md flex items-center justify-center border ${
+                                  included
+                                    ? 'bg-emerald-400 border-emerald-400 text-slate-950'
+                                    : 'border-slate-600'
+                                }`}
+                              >
+                                {included && <Check className="w-3 h-3 stroke-[3]" />}
+                              </div>
+                              <div className="truncate">
+                                <p className="text-xs font-medium text-white truncate">
+                                  {item.name}
+                                </p>
+                                <p className="text-[10px] font-mono text-slate-400">
+                                  {item.portionEstimate} • P {item.proteinGrams}g • C{' '}
+                                  {item.carbsGrams}g • F {item.fatGrams}g
+                                </p>
+                              </div>
+                            </div>
+                            <span className="text-xs font-mono tabular-nums font-semibold text-slate-200 shrink-0 ml-2">
+                              {Math.round(item.calories * portionMultiplier)} kcal
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleConfirmLogMeal}
+                    className="w-full py-3.5 rounded-full bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-display font-bold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+                  >
+                    <Plus className="w-4 h-4 stroke-[2.5]" />
+                    Log Meal (+{calculateMealXp(analysisResult.healthScore).totalXp} XP)
+                  </button>
+                </motion.div>
+              )}
+            </motion.div>
+          )}
+
+          {/* TAB 3: SCIENTIFIC BODY MATH CALCULATOR */}
+          {activeTab === 'math' && (
+            <motion.div
+              key="math"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={M3_SPRING}
+              className="space-y-4"
+            >
+              {/* Biomathematical Output Summary Card */}
+              <div className="rounded-[28px] bg-m3-surfaceContainer border border-white/[0.07] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 block">
+                      Hall (Lancet 2011) + Forbes (1987)
+                    </span>
+                    <h1 className="text-lg font-display font-bold text-white tracking-tight mt-0.5">
+                      Biomathematical Target Engine
+                    </h1>
+                  </div>
+                  <button
+                    onClick={() => setShowFormulaSheet((v) => !v)}
+                    className="px-3 py-1.5 rounded-full bg-m3-surfaceHigh text-slate-200 border border-white/[0.07] text-[11px] font-medium flex items-center gap-1.5"
+                  >
+                    <Info className="w-3.5 h-3.5 text-emerald-400" />
+                    {showFormulaSheet ? 'Hide Papers' : 'Formulas'}
+                  </button>
+                </div>
+
+                {/* Primary Computed Intake Banner */}
+                <div className="mt-4 p-4 rounded-[22px] bg-m3-primaryContainer border border-emerald-400/25 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-200/80 block">
+                      Optimal Daily Intake
+                    </span>
+                    <div className="flex items-baseline gap-1.5 mt-0.5">
+                      <span className="text-3xl font-mono tabular-nums font-bold text-white">
+                        {metabolicResult.targetDailyCalories}
+                      </span>
+                      <span className="text-xs font-mono text-emerald-200">kcal / day</span>
+                    </div>
+                    <span className="text-[11px] font-mono tabular-nums text-emerald-200/90 mt-1 block">
+                      {metabolicResult.dailyCalorieDelta === 0
+                        ? 'Isocaloric Maintenance'
+                        : metabolicResult.dailyCalorieDelta < 0
+                        ? `${metabolicResult.dailyCalorieDelta} kcal/day deficit (${metabolicResult.weeklyRateKg} kg/wk)`
+                        : `+${metabolicResult.dailyCalorieDelta} kcal/day surplus (+${metabolicResult.weeklyRateKg} kg/wk)`}
+                    </span>
+                  </div>
+
+                  <button
+                    onClick={handleApplyScientificTargets}
+                    className="px-4 py-2.5 rounded-full bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-display font-bold text-xs shrink-0 active:scale-95 transition-all"
+                  >
+                    Apply Target
+                  </button>
+                </div>
+
+                {mathAppliedToast && (
+                  <div className="mt-3 px-3.5 py-2 rounded-xl bg-emerald-500/15 border border-emerald-400/30 text-emerald-200 text-xs flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>Daily calorie and macro targets updated on your dashboard.</span>
+                  </div>
+                )}
+
+                {/* Scientific Ledger Rows (divide-y instead of bloated sub-cards) */}
+                <div className="mt-4 rounded-[22px] bg-m3-surfaceLow border border-white/[0.06] divide-y divide-white/[0.06] overflow-hidden">
+                  <div className="px-4 py-2.5 flex items-center justify-between text-xs">
+                    <span className="text-slate-400">Resting Metabolic Rate (RMR)</span>
+                    <span className="font-mono tabular-nums text-white font-semibold">
+                      {metabolicResult.activeRmr} kcal/d
+                    </span>
+                  </div>
+                  <div className="px-4 py-2.5 flex items-center justify-between text-xs">
+                    <span className="text-slate-400">
+                      Maintenance TDEE (PAL ×{metabolicResult.pal.toFixed(2)})
+                    </span>
+                    <span className="font-mono tabular-nums text-sky-300 font-semibold">
+                      {metabolicResult.tdee} kcal/d
+                    </span>
+                  </div>
+                  <div className="px-4 py-2.5 flex items-center justify-between text-xs">
+                    <span className="text-slate-400">
+                      Forbes Lean Partitioning Ratio (p)
+                    </span>
+                    <span className="font-mono tabular-nums text-slate-200">
+                      {(metabolicResult.forbesPartitionP * 100).toFixed(1)}% LBM /{' '}
+                      {((1 - metabolicResult.forbesPartitionP) * 100).toFixed(1)}% FM
+                    </span>
+                  </div>
+                  <div className="px-4 py-2.5 flex items-center justify-between text-xs">
+                    <span className="text-slate-400">
+                      Effective Tissue Energy Density (ρ_eff)
+                    </span>
+                    <span className="font-mono tabular-nums text-amber-300 font-semibold">
+                      {metabolicResult.effectiveEnergyDensityKcalPerKg} kcal/kg
+                    </span>
+                  </div>
+                  <div className="px-4 py-2.5 flex items-center justify-between text-xs">
+                    <span className="text-slate-400">
+                      Hall Dynamic Thermogenesis (ε = 22)
+                    </span>
+                    <span className="font-mono tabular-nums text-slate-200">
+                      {metabolicResult.metabolicAdaptationKcal >= 0 ? '+' : ''}
+                      {metabolicResult.metabolicAdaptationKcal} kcal/d
+                    </span>
+                  </div>
+                  <div className="px-4 py-2.5 flex items-center justify-between text-xs">
+                    <span className="text-slate-400">Body Composition Estimate</span>
+                    <span className="font-mono tabular-nums text-slate-200">
+                      {metabolicResult.leanMassKg}kg LBM ({metabolicResult.estimatedBodyFatPct}% BF)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Computed Macro Prescription Bar */}
+                <div className="mt-4 grid grid-cols-4 gap-2">
+                  {[
+                    {
+                      label: 'Protein',
+                      val: `${metabolicResult.recommendedMacros.proteinGrams}g`,
+                      sub: 'Morton 2018',
+                      color: 'text-emerald-300',
+                    },
+                    {
+                      label: 'Carbs',
+                      val: `${metabolicResult.recommendedMacros.carbsGrams}g`,
+                      sub: 'Glycogen',
+                      color: 'text-sky-300',
+                    },
+                    {
+                      label: 'Fat',
+                      val: `${metabolicResult.recommendedMacros.fatGrams}g`,
+                      sub: 'Helms 2014',
+                      color: 'text-amber-300',
+                    },
+                    {
+                      label: 'Fiber',
+                      val: `${metabolicResult.recommendedMacros.fiberGrams}g`,
+                      sub: '14g/1000kcal',
+                      color: 'text-teal-300',
+                    },
+                  ].map((m) => (
+                    <div
+                      key={m.label}
+                      className="p-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.05] text-center"
                     >
-                      {sexVal}
-                    </button>
+                      <span className="text-[10px] text-slate-400 block">{m.label}</span>
+                      <span className={`text-sm font-mono tabular-nums font-bold ${m.color}`}>
+                        {m.val}
+                      </span>
+                      <span className="text-[9px] text-slate-500 block mt-0.5">{m.sub}</span>
+                    </div>
                   ))}
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-medium text-zinc-400 mb-1">
-                    Age (years)
-                  </label>
-                  <input
-                    type="number"
-                    value={userState.biometrics.age}
-                    onChange={(e) =>
-                      setUserState((s) => ({
-                        ...s,
-                        biometrics: { ...s.biometrics, age: Number(e.target.value) || 24 },
-                      }))
-                    }
-                    className="w-full min-h-11 bg-zinc-950 border border-zinc-800 rounded-xl px-3 text-sm text-zinc-100 tabular-nums focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-zinc-400 mb-1">
-                    Height (cm)
-                  </label>
-                  <input
-                    type="number"
-                    value={userState.biometrics.heightCm}
-                    onChange={(e) =>
-                      setUserState((s) => ({
-                        ...s,
-                        biometrics: { ...s.biometrics, heightCm: Number(e.target.value) || 170 },
-                      }))
-                    }
-                    className="w-full min-h-11 bg-zinc-950 border border-zinc-800 rounded-xl px-3 text-sm text-zinc-100 tabular-nums focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-zinc-400 mb-1">
-                    Current Weight (kg)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={userState.biometrics.weightKg}
-                    onChange={(e) =>
-                      setUserState((s) => ({
-                        ...s,
-                        biometrics: { ...s.biometrics, weightKg: Number(e.target.value) || 70 },
-                      }))
-                    }
-                    className="w-full min-h-11 bg-zinc-950 border border-zinc-800 rounded-xl px-3 text-sm text-zinc-100 tabular-nums focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-zinc-400 mb-1">
-                    Target Weight (kg)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={userState.biometrics.targetWeightKg}
-                    onChange={(e) =>
-                      setUserState((s) => ({
-                        ...s,
-                        biometrics: {
-                          ...s.biometrics,
-                          targetWeightKg: Number(e.target.value) || 70,
-                        },
-                      }))
-                    }
-                    className="w-full min-h-11 bg-zinc-950 border border-zinc-800 rounded-xl px-3 text-sm text-zinc-100 tabular-nums focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-zinc-400 mb-1">
-                    Goal Timeline (weeks)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="104"
-                    value={userState.biometrics.targetTimelineWeeks}
-                    onChange={(e) =>
-                      setUserState((s) => ({
-                        ...s,
-                        biometrics: {
-                          ...s.biometrics,
-                          targetTimelineWeeks: Math.max(1, Number(e.target.value) || 12),
-                        },
-                      }))
-                    }
-                    className="w-full min-h-11 bg-zinc-950 border border-zinc-800 rounded-xl px-3 text-sm text-zinc-100 tabular-nums focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-zinc-400 mb-1">
-                    Body Fat % (optional)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    placeholder={`Est. ${metabolicPlan.estimatedBodyFatPct}%`}
-                    value={userState.biometrics.bodyFatPct ?? ''}
-                    onChange={(e) => {
-                      const val = e.target.value.trim();
-                      setUserState((s) => ({
-                        ...s,
-                        biometrics: {
-                          ...s.biometrics,
-                          bodyFatPct: val ? Number(val) : undefined,
-                        },
-                      }));
-                    }}
-                    className="w-full min-h-11 bg-zinc-950 border border-zinc-800 rounded-xl px-3 text-sm text-zinc-100 tabular-nums focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div className="col-span-2">
-                  <label className="block text-[11px] font-medium text-zinc-400 mb-1">
-                    Physical Activity Level (PAL)
-                  </label>
-                  <select
-                    value={userState.biometrics.activityLevel}
-                    onChange={(e) =>
-                      setUserState((s) => ({
-                        ...s,
-                        biometrics: {
-                          ...s.biometrics,
-                          activityLevel: e.target.value as UserState['biometrics']['activityLevel'],
-                        },
-                      }))
-                    }
-                    className="w-full min-h-11 bg-zinc-950 border border-zinc-800 rounded-xl px-3 text-xs font-medium text-zinc-100 focus:outline-none focus:border-emerald-500"
-                  >
-                    {ACTIVITY_MULTIPLIERS.map((a) => (
-                      <option key={a.value} value={a.value}>
-                        {a.label} (PAL ×{a.pal}) — {a.detail}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="col-span-2 flex items-center justify-between bg-zinc-950 border border-zinc-800 rounded-xl p-3">
-                  <div>
-                    <p className="text-xs font-semibold text-zinc-200">
-                      Resistance / Strength Training
-                    </p>
-                    <p className="text-[11px] text-zinc-400">
-                      Preserves lean mass (reduces Forbes partitioning factor p by 50%)
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={userState.biometrics.resistanceTraining}
-                    onClick={() =>
-                      setUserState((s) => ({
-                        ...s,
-                        biometrics: {
-                          ...s.biometrics,
-                          resistanceTraining: !s.biometrics.resistanceTraining,
-                        },
-                      }))
-                    }
-                    className={cn(
-                      'w-12 h-7 rounded-full p-1 transition-colors duration-150 shrink-0',
-                      userState.biometrics.resistanceTraining ? 'bg-emerald-500' : 'bg-zinc-700'
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        'w-5 h-5 rounded-full bg-zinc-950 transition-transform duration-150',
-                        userState.biometrics.resistanceTraining && 'translate-x-5'
-                      )}
-                    />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Prescribed Output & Mathematical Proof Card */}
-            <div className="bg-zinc-900 border border-zinc-800/90 rounded-3xl p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-3.5">
-                <div>
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">
-                    Prescribed Daily Intake
-                  </span>
-                  <div className="flex items-baseline gap-1.5 mt-0.5">
-                    <span className="text-3xl font-extrabold text-zinc-100 tabular-nums">
-                      {metabolicPlan.targetDailyCalories}
-                    </span>
-                    <span className="text-xs font-semibold text-zinc-400 uppercase">kcal / day</span>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <span
-                    className={cn(
-                      'inline-block text-xs font-bold px-2.5 py-1 rounded-lg tabular-nums',
-                      metabolicPlan.dailyCalorieDelta < 0
-                        ? 'bg-emerald-500/15 text-emerald-400'
-                        : metabolicPlan.dailyCalorieDelta > 0
-                        ? 'bg-sky-500/15 text-sky-400'
-                        : 'bg-zinc-800 text-zinc-300'
-                    )}
-                  >
-                    {metabolicPlan.dailyCalorieDelta > 0 ? '+' : ''}
-                    {metabolicPlan.dailyCalorieDelta} kcal/d
-                  </span>
-                  <p className="text-[11px] text-zinc-400 mt-1 tabular-nums">
-                    Rate: {metabolicPlan.weeklyRateKg > 0 ? '+' : ''}
-                    {metabolicPlan.weeklyRateKg} kg/wk
-                  </p>
-                </div>
-              </div>
-
-              {/* Prescribed Macros */}
-              <div className="grid grid-cols-4 gap-2 text-center">
-                <div className="bg-zinc-950 border border-zinc-800/80 p-2.5 rounded-2xl">
-                  <span className="block text-[10px] font-bold uppercase text-rose-400">
-                    Protein
-                  </span>
-                  <span className="text-sm font-extrabold text-zinc-100 tabular-nums">
-                    {metabolicPlan.recommendedMacros.proteinGrams}g
-                  </span>
-                </div>
-                <div className="bg-zinc-950 border border-zinc-800/80 p-2.5 rounded-2xl">
-                  <span className="block text-[10px] font-bold uppercase text-amber-400">
-                    Carbs
-                  </span>
-                  <span className="text-sm font-extrabold text-zinc-100 tabular-nums">
-                    {metabolicPlan.recommendedMacros.carbsGrams}g
-                  </span>
-                </div>
-                <div className="bg-zinc-950 border border-zinc-800/80 p-2.5 rounded-2xl">
-                  <span className="block text-[10px] font-bold uppercase text-sky-400">
-                    Fats
-                  </span>
-                  <span className="text-sm font-extrabold text-zinc-100 tabular-nums">
-                    {metabolicPlan.recommendedMacros.fatGrams}g
-                  </span>
-                </div>
-                <div className="bg-zinc-950 border border-zinc-800/80 p-2.5 rounded-2xl">
-                  <span className="block text-[10px] font-bold uppercase text-emerald-400">
-                    Fiber
-                  </span>
-                  <span className="text-sm font-extrabold text-zinc-100 tabular-nums">
-                    {metabolicPlan.recommendedMacros.fiberGrams}g
-                  </span>
-                </div>
-              </div>
-
-              {/* Step-by-Step Mathematical Derivation */}
-              <div className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-3.5 space-y-2 text-xs">
-                <p className="font-bold text-zinc-200">
-                  Biomathematical Breakdown
-                </p>
-                <div className="flex justify-between text-zinc-400">
-                  <span>1. Mifflin-St Jeor RMR (1990)</span>
-                  <span className="font-mono text-zinc-200 tabular-nums">
-                    {metabolicPlan.rmrMifflin} kcal/d
-                  </span>
-                </div>
-                <div className="flex justify-between text-zinc-400">
-                  <span>
-                    2. Katch-McArdle RMR (LBM {metabolicPlan.leanMassKg}kg)
-                  </span>
-                  <span className="font-mono text-zinc-200 tabular-nums">
-                    {metabolicPlan.rmrKatch} kcal/d
-                  </span>
-                </div>
-                <div className="flex justify-between text-zinc-400">
-                  <span>3. Maintenance TDEE (RMR × {metabolicPlan.pal})</span>
-                  <span className="font-mono text-zinc-200 tabular-nums">
-                    {metabolicPlan.tdee} kcal/d
-                  </span>
-                </div>
-                <div className="flex justify-between text-zinc-400">
-                  <span>
-                    4. Forbes Partitioning (p = {metabolicPlan.forbesPartitionP})
-                  </span>
-                  <span className="font-mono text-zinc-200 tabular-nums">
-                    {metabolicPlan.effectiveEnergyDensityKcalPerKg} kcal/kg
-                  </span>
-                </div>
-                <div className="flex justify-between text-zinc-400">
-                  <span>5. Hall Dynamic Adaptation (Lancet, 2011)</span>
-                  <span className="font-mono text-zinc-200 tabular-nums">
-                    {metabolicPlan.metabolicAdaptationKcal > 0 ? '+' : ''}
-                    {metabolicPlan.metabolicAdaptationKcal} kcal/d
-                  </span>
-                </div>
-
-                <div className="pt-2 border-t border-zinc-800/80 text-[11px] text-zinc-400 font-mono leading-relaxed">
-                  I = TDEE₀ + [ρ_eff · ΔW] / [t · (1 - β_TEF)] + ½ · ε · ΔW
-                </div>
-              </div>
-
-              {metabolicPlan.isSafetyClamped && (
-                <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 p-2.5 rounded-xl text-pretty">
-                  Note: Your timeline is aggressive, so daily intake was clamped to a safe clinical
-                  floor. Consider extending your target weeks slightly.
-                </p>
-              )}
-
-              <button
-                type="button"
-                onClick={handleApplyScientificPlan}
-                className="w-full min-h-11 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-zinc-950 font-bold py-3 px-4 rounded-2xl transition-transform duration-150 ease-out"
-              >
-                Apply Prescribed Targets ({metabolicPlan.targetDailyCalories} kcal)
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* QUESTS & BADGES TAB */}
-        {activeTab === 'quests' && (
-          <div className="space-y-5">
-            <div className="bg-zinc-900 border border-zinc-800/90 rounded-3xl p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                  Active Logging Streak
-                </p>
-                <h2 className="text-3xl font-extrabold text-zinc-100 mt-0.5 tabular-nums text-balance">
-                  {userState.streakDays} {userState.streakDays === 1 ? 'Day' : 'Days'}
-                </h2>
-                <p className="text-xs text-zinc-400 mt-1 tabular-nums">
-                  Longest: <strong className="text-zinc-200">{userState.longestStreak}d</strong> •
-                  Streak Freezes: <strong className="text-sky-400">{userState.streakFreezes}</strong>
-                </p>
-              </div>
-              <div className="w-14 h-14 rounded-2xl bg-zinc-950 border border-zinc-800 flex items-center justify-center text-3xl">
-                🔥
-              </div>
-            </div>
-
-            <section className="space-y-2.5">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 text-balance">
-                Today&apos;s Quests
-              </h3>
-              <div className="space-y-2">
-                {dailyQuests.map((q) => {
-                  const isClaimed = claimedTodaySet.has(q.id);
-                  const pct = Math.min(100, Math.round((q.progress / q.target) * 100));
-                  return (
-                    <div
-                      key={q.id}
-                      className="bg-zinc-900 border border-zinc-800/90 rounded-2xl p-4 space-y-2.5"
+                {/* Collapsible Research Paper Reference Sheet */}
+                <AnimatePresence>
+                  {showFormulaSheet && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="overflow-hidden"
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl">{q.icon}</span>
-                          <div>
-                            <h4 className="font-bold text-sm text-zinc-100 text-balance">
-                              {q.title}
-                            </h4>
-                            <p className="text-xs text-zinc-400 text-pretty">{q.description}</p>
-                          </div>
-                        </div>
-                        {isClaimed ? (
-                          <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-xl">
-                            Done
+                      <div className="mt-4 p-4 rounded-2xl bg-m3-surfaceLow border border-white/[0.07] space-y-2.5 text-[11px] text-slate-300 leading-relaxed">
+                        <p className="font-display font-bold text-emerald-300">
+                          Peer-Reviewed Biomathematical Formulation
+                        </p>
+                        <p>
+                          <strong className="text-white">1. Basal Expenditure:</strong>{' '}
+                          Mifflin-St Jeor (1990) & Katch-McArdle (1973) lean-mass hybrid:
+                          <span className="block font-mono text-[10px] text-slate-400 mt-0.5">
+                            RMR = 10W + 6.25H - 5A + s | RMR_LBM = 370 + 21.6(LBM)
                           </span>
-                        ) : q.completed ? (
-                          <button
-                            type="button"
-                            onClick={() => handleClaimQuest(q.id, q.xpReward, q.title)}
-                            className="min-h-9 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs tabular-nums active:scale-[0.98] transition-transform duration-150"
-                          >
-                            Claim +{q.xpReward} XP
-                          </button>
-                        ) : (
-                          <span className="text-xs font-bold text-amber-400 tabular-nums">
-                            +{q.xpReward} XP
+                        </p>
+                        <p>
+                          <strong className="text-white">2. Forbes Partitioning (1987):</strong>{' '}
+                          Non-linear fraction of weight change from lean vs adipose tissue:
+                          <span className="block font-mono text-[10px] text-slate-400 mt-0.5">
+                            p = C / (C + FM), C = 10.4 * (rho_L / rho_F) = 1.996 kg
                           </span>
-                        )}
+                        </p>
+                        <p>
+                          <strong className="text-white">
+                            3. Hall et al. (The Lancet, 2011):
+                          </strong>{' '}
+                          Replaces the static 3,500 kcal rule with dynamic adaptation (ε = 22 kcal/kg/d):
+                          <span className="block font-mono text-[10px] text-slate-400 mt-0.5">
+                            Delta_E = [rho_eff * (Delta_W / t)] + [0.5 * 22 * Delta_W]
+                          </span>
+                        </p>
                       </div>
-                      <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-emerald-500 transition-all duration-300 ease-out"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            <section className="space-y-2.5">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5 text-balance">
-                <Trophy className="w-4 h-4 text-amber-400" />
-                Achievement Badges ({userState.unlockedBadgeIds.length}/{ALL_BADGES.length})
-              </h3>
-              <div className="grid grid-cols-2 gap-2.5">
-                {ALL_BADGES.map((badge) => {
-                  const unlocked = userState.unlockedBadgeIds.includes(badge.id);
-                  return (
-                    <div
-                      key={badge.id}
-                      className={cn(
-                        'p-3.5 rounded-2xl border transition-opacity',
-                        unlocked
-                          ? 'bg-zinc-900 border-emerald-500/40'
-                          : 'bg-zinc-900/40 border-zinc-800/70 opacity-55'
-                      )}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-2xl">{badge.icon}</span>
-                        <span
-                          className={cn(
-                            'text-[10px] font-bold px-2 py-0.5 rounded-md tabular-nums',
-                            unlocked
-                              ? 'bg-emerald-500/15 text-emerald-400'
-                              : 'bg-zinc-800 text-zinc-400'
-                          )}
-                        >
-                          +{badge.xpReward} XP
-                        </span>
-                      </div>
-                      <h4 className="font-bold text-xs text-zinc-100 mt-2 text-balance">
-                        {badge.title}
-                      </h4>
-                      <p className="text-[11px] text-zinc-400 mt-0.5 leading-snug text-pretty">
-                        {badge.description}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          </div>
-        )}
-
-        {/* SETTINGS TAB */}
-        {activeTab === 'settings' && (
-          <form onSubmit={handleSaveSettings} className="space-y-4">
-            {settingsSavedBanner && (
-              <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-2">
-                <Check className="w-4 h-4 text-emerald-400" />
-                Settings saved to your device.
-              </div>
-            )}
-
-            {/* API Key */}
-            <div className="bg-zinc-900 border border-zinc-800/90 rounded-2xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-zinc-100 flex items-center gap-2 text-balance">
-                  <KeyRound className="w-4 h-4 text-emerald-400" />
-                  API Key
-                </h3>
-                {hasBuiltInApiKey() && (
-                  <span className="text-[10px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-md font-semibold">
-                    Configured
-                  </span>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type={showApiKey ? 'text' : 'password'}
-                  value={apiKeyInput}
-                  onChange={(e) => setApiKeyInput(e.target.value)}
-                  placeholder={hasBuiltInApiKey() ? 'Override saved key...' : 'AIzaSy...'}
-                  className="flex-1 min-h-11 bg-zinc-950 border border-zinc-800 rounded-xl px-3 text-xs text-zinc-100 focus:outline-none focus:border-emerald-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowApiKey((s) => !s)}
-                  className="min-h-11 px-3.5 rounded-xl bg-zinc-800 text-xs font-semibold text-zinc-300"
-                >
-                  {showApiKey ? 'Hide' : 'Show'}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <button
-                  type="button"
-                  disabled={testingApi}
-                  onClick={handleTestApiKey}
-                  className="min-h-10 px-3.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-xs font-bold text-emerald-400 border border-zinc-700"
-                >
-                  {testingApi ? 'Testing Connection...' : 'Test API Connection'}
-                </button>
-                {apiTestResult && (
-                  <span
-                    className={cn(
-                      'text-xs font-semibold tabular-nums',
-                      apiTestResult.ok ? 'text-emerald-400' : 'text-rose-400'
-                    )}
-                  >
-                    {apiTestResult.ok
-                      ? `✓ ${apiTestResult.message} (${apiTestResult.latencyMs}ms)`
-                      : `✕ ${apiTestResult.message}`}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Manual Calorie & Macro Override */}
-            <div className="bg-zinc-900 border border-zinc-800/90 rounded-2xl p-4 space-y-3">
-              <h3 className="text-sm font-bold text-zinc-100 text-balance">
-                Daily Calorie &amp; Macro Budget
-              </h3>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] text-zinc-400 mb-1">
-                    Daily Calories (kcal)
-                  </label>
-                  <input
-                    type="number"
-                    value={userState.goals.dailyCalories}
-                    onChange={(e) =>
-                      setUserState({
-                        ...userState,
-                        goals: {
-                          ...userState.goals,
-                          dailyCalories: Number(e.target.value) || 2000,
-                        },
-                      })
-                    }
-                    className="w-full min-h-11 bg-zinc-950 border border-zinc-800 rounded-xl px-3 text-xs text-zinc-100 tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-zinc-400 mb-1">Protein (g)</label>
-                  <input
-                    type="number"
-                    value={userState.goals.proteinGrams}
-                    onChange={(e) =>
-                      setUserState({
-                        ...userState,
-                        goals: {
-                          ...userState.goals,
-                          proteinGrams: Number(e.target.value) || 140,
-                        },
-                      })
-                    }
-                    className="w-full min-h-11 bg-zinc-950 border border-zinc-800 rounded-xl px-3 text-xs text-zinc-100 tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-zinc-400 mb-1">Carbs (g)</label>
-                  <input
-                    type="number"
-                    value={userState.goals.carbsGrams}
-                    onChange={(e) =>
-                      setUserState({
-                        ...userState,
-                        goals: {
-                          ...userState.goals,
-                          carbsGrams: Number(e.target.value) || 200,
-                        },
-                      })
-                    }
-                    className="w-full min-h-11 bg-zinc-950 border border-zinc-800 rounded-xl px-3 text-xs text-zinc-100 tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-zinc-400 mb-1">Fat (g)</label>
-                  <input
-                    type="number"
-                    value={userState.goals.fatGrams}
-                    onChange={(e) =>
-                      setUserState({
-                        ...userState,
-                        goals: {
-                          ...userState.goals,
-                          fatGrams: Number(e.target.value) || 65,
-                        },
-                      })
-                    }
-                    className="w-full min-h-11 bg-zinc-950 border border-zinc-800 rounded-xl px-3 text-xs text-zinc-100 tabular-nums"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Personal Diet Context */}
-            <div className="bg-zinc-900 border border-zinc-800/90 rounded-2xl p-4 space-y-2">
-              <h3 className="text-sm font-bold text-zinc-100 text-balance">
-                Personal Diet Context
-              </h3>
-              <p className="text-xs text-zinc-400 text-pretty">
-                Persistent cooking &amp; portion notes included automatically when analyzing your
-                meal photos.
-              </p>
-              <textarea
-                rows={3}
-                value={userState.customPromptInstruction}
-                onChange={(e) =>
-                  setUserState({
-                    ...userState,
-                    customPromptInstruction: e.target.value,
-                  })
-                }
-                placeholder="E.g. Home-cooked meals, 1 tsp ghee on rotis, standard bowl is 300ml..."
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-zinc-100 focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="w-full min-h-11 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-zinc-950 font-bold text-sm transition-transform duration-150"
-            >
-              Save Settings
-            </button>
-
-            <div className="bg-zinc-900 border border-zinc-800/90 rounded-2xl p-4 space-y-3">
-              <h3 className="text-sm font-bold text-zinc-100">Local Data Backup</h3>
-              <div className="flex gap-2.5">
-                <button
-                  type="button"
-                  onClick={handleExportData}
-                  className="flex-1 min-h-11 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold flex items-center justify-center gap-1.5"
-                >
-                  <Download className="w-4 h-4 text-emerald-400" /> Export JSON
-                </button>
-                <button
-                  type="button"
-                  onClick={() => importJsonInputRef.current?.click()}
-                  className="flex-1 min-h-11 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold flex items-center justify-center gap-1.5"
-                >
-                  <Upload className="w-4 h-4 text-sky-400" /> Import JSON
-                </button>
-              </div>
-            </div>
-          </form>
-        )}
-      </main>
-
-      {/* Meal History Modal (z-40) */}
-      {showHistoryDrawer && (
-        <div className="fixed inset-0 z-40 bg-zinc-950 flex flex-col max-w-md mx-auto overflow-y-auto">
-          <div className="sticky top-0 z-10 bg-zinc-950/90 backdrop-blur-md flex items-center justify-between px-4 py-3.5 border-b border-zinc-800">
-            <h2 className="font-bold text-sm text-zinc-100 flex items-center gap-2 text-balance">
-              <History className="w-4 h-4 text-emerald-400" />
-              Meal Log History ({meals.length})
-            </h2>
-            <button
-              type="button"
-              aria-label="Close history"
-              onClick={() => setShowHistoryDrawer(false)}
-              className="min-h-10 min-w-10 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-300"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="p-4 space-y-2.5">
-            {meals.length === 0 ? (
-              <p className="text-center text-xs text-zinc-500 py-12">No meals logged yet.</p>
-            ) : (
-              meals.map((meal) => (
-                <div
-                  key={meal.id}
-                  className="bg-zinc-900 border border-zinc-800 rounded-2xl p-3.5 flex items-center justify-between gap-3"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    {meal.photoDataUrl ? (
-                      <img
-                        src={meal.photoDataUrl}
-                        alt={meal.mealName}
-                        className="w-12 h-12 rounded-xl object-cover border border-zinc-800 shrink-0"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 rounded-xl bg-zinc-950 flex items-center justify-center text-xl shrink-0">
-                        {meal.emoji}
-                      </div>
-                    )}
-                    <div className="min-w-0">
-                      <p className="text-[10px] text-zinc-400 tabular-nums">
-                        {meal.dateKey} • {meal.mealType.toUpperCase()}
-                      </p>
-                      <h4 className="text-sm font-bold text-zinc-100 truncate">
-                        {meal.emoji} {meal.mealName}
-                      </h4>
-                      <p className="text-xs text-zinc-400 tabular-nums">
-                        P: {meal.macros.proteinGrams}g • C: {meal.macros.carbsGrams}g • F:{' '}
-                        {meal.macros.fatGrams}g
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-sm font-bold text-emerald-400 tabular-nums">
-                      {meal.totalCalories} kcal
-                    </span>
-                    <button
-                      type="button"
-                      aria-label="Delete meal"
-                      onClick={() => handleDeleteMeal(meal.id)}
-                      className="block ml-auto text-zinc-500 hover:text-rose-400 mt-1 p-1"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Food Scanner Modal (z-50) */}
-      {scannerOpen && (
-        <div className="fixed inset-0 z-50 bg-zinc-950 flex flex-col max-w-md mx-auto overflow-y-auto">
-          <div className="sticky top-0 z-10 bg-zinc-950/90 backdrop-blur-md flex items-center justify-between px-4 py-3.5 border-b border-zinc-800">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-emerald-400" />
-              <h2 className="font-bold text-sm text-zinc-100 text-balance">Meal Scanner</h2>
-            </div>
-            <button
-              type="button"
-              aria-label="Close scanner"
-              onClick={() => setScannerOpen(false)}
-              className="min-h-10 min-w-10 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-300"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="p-4 space-y-4 flex-1">
-            {capturedImage && (
-              <div className="relative rounded-2xl overflow-hidden border border-zinc-800 bg-zinc-900 max-h-56 flex items-center justify-center">
-                <img
-                  src={capturedImage.dataUrl}
-                  alt="Captured meal"
-                  className="w-full max-h-56 object-cover"
-                />
-                <button
-                  type="button"
-                  onClick={() => handleStartCapture('camera')}
-                  className="absolute bottom-3 right-3 min-h-9 bg-zinc-950/90 px-3 py-1.5 rounded-xl text-xs font-bold text-zinc-100 border border-zinc-700 flex items-center gap-1.5"
-                >
-                  <Camera className="w-3.5 h-3.5 text-emerald-400" /> Retake
-                </button>
-              </div>
-            )}
-
-            {/* Meal Type Selector */}
-            <div className="grid grid-cols-4 gap-1.5 bg-zinc-900 p-1 rounded-2xl border border-zinc-800">
-              {(['breakfast', 'lunch', 'dinner', 'snack'] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setMealType(t)}
-                  className={cn(
-                    'min-h-10 rounded-xl text-xs font-bold capitalize transition-colors duration-150',
-                    mealType === t
-                      ? 'bg-emerald-500 text-zinc-950'
-                      : 'text-zinc-400 hover:text-zinc-100'
+                    </motion.div>
                   )}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-
-            {!analysisResult && !isAnalyzing && (
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                    Optional Meal Note
-                  </label>
-                  <input
-                    type="text"
-                    value={userNote}
-                    onChange={(e) => setUserNote(e.target.value)}
-                    placeholder="e.g., 200g chicken, cooked with 1 tbsp olive oil..."
-                    className="w-full min-h-11 bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 text-xs text-zinc-100 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                {analysisError && (
-                  <div className="p-3.5 rounded-2xl bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 text-pretty">
-                    {analysisError}
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  onClick={handleRunGeminiAnalysis}
-                  className="w-full min-h-12 rounded-2xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-zinc-950 font-bold text-sm flex items-center justify-center gap-2 transition-transform duration-150"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  <span>Calculate Calories</span>
-                </button>
+                </AnimatePresence>
               </div>
-            )}
 
-            {/* Structural Skeleton Loading State (ui-skills baseline-ui rule) */}
-            {isAnalyzing && (
-              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-4">
-                <div className="flex justify-between items-start">
-                  <div className="space-y-2">
-                    <div className="h-4 w-28 rounded-md bg-zinc-800 animate-pulse" />
-                    <div className="h-6 w-44 rounded-lg bg-zinc-800 animate-pulse" />
-                  </div>
-                  <div className="h-8 w-16 rounded-lg bg-zinc-800 animate-pulse" />
-                </div>
-                <div className="grid grid-cols-4 gap-2">
-                  <div className="h-12 rounded-xl bg-zinc-800 animate-pulse" />
-                  <div className="h-12 rounded-xl bg-zinc-800 animate-pulse" />
-                  <div className="h-12 rounded-xl bg-zinc-800 animate-pulse" />
-                  <div className="h-12 rounded-xl bg-zinc-800 animate-pulse" />
-                </div>
-                <div className="space-y-2">
-                  <div className="h-11 rounded-xl bg-zinc-800 animate-pulse" />
-                  <div className="h-11 rounded-xl bg-zinc-800 animate-pulse" />
-                </div>
-              </div>
-            )}
-
-            {/* Analysis Results */}
-            {analysisResult && adjustedAnalysis && (
-              <div className="space-y-4">
-                <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 tabular-nums">
-                        Health Score: {analysisResult.healthScore}/100
-                      </span>
-                      <h3 className="text-lg font-extrabold text-zinc-100 mt-1 text-balance">
-                        {analysisResult.emoji} {analysisResult.mealName}
-                      </h3>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-2xl font-extrabold text-emerald-400 tabular-nums">
-                        {adjustedAnalysis.totalCalories}
-                      </span>
-                      <span className="block text-[10px] uppercase text-zinc-400">kcal</span>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-4 gap-2 pt-2 border-t border-zinc-800 text-center">
-                    <div className="bg-zinc-950 p-2 rounded-xl">
-                      <span className="block text-[10px] text-rose-400 font-bold">Protein</span>
-                      <span className="text-xs font-extrabold text-zinc-100 tabular-nums">
-                        {adjustedAnalysis.macros.proteinGrams}g
-                      </span>
-                    </div>
-                    <div className="bg-zinc-950 p-2 rounded-xl">
-                      <span className="block text-[10px] text-amber-400 font-bold">Carbs</span>
-                      <span className="text-xs font-extrabold text-zinc-100 tabular-nums">
-                        {adjustedAnalysis.macros.carbsGrams}g
-                      </span>
-                    </div>
-                    <div className="bg-zinc-950 p-2 rounded-xl">
-                      <span className="block text-[10px] text-sky-400 font-bold">Fat</span>
-                      <span className="text-xs font-extrabold text-zinc-100 tabular-nums">
-                        {adjustedAnalysis.macros.fatGrams}g
-                      </span>
-                    </div>
-                    <div className="bg-zinc-950 p-2 rounded-xl">
-                      <span className="block text-[10px] text-emerald-400 font-bold">Fiber</span>
-                      <span className="text-xs font-extrabold text-zinc-100 tabular-nums">
-                        {adjustedAnalysis.macros.fiberGrams}g
-                      </span>
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-zinc-300 bg-zinc-950 p-2.5 rounded-xl border border-zinc-800 text-pretty">
-                    {analysisResult.wittyFeedback}
-                  </p>
+              {/* Biometric Input Controls */}
+              <div className="rounded-[28px] bg-m3-surfaceContainer border border-white/[0.07] p-5 space-y-4">
+                <div className="flex items-center gap-2">
+                  <Scale className="w-4 h-4 text-emerald-400" />
+                  <h2 className="text-sm font-display font-bold text-white">
+                    Your Biometric Parameters
+                  </h2>
                 </div>
 
-                {/* Portion Size Multiplier */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-zinc-400">Portion Multiplier</label>
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {[0.5, 0.75, 1, 1.25, 1.5].map((mult) => (
+                {/* Sex & Resistance Training Toggle */}
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="p-1 rounded-2xl bg-m3-surfaceLow border border-white/[0.06] grid grid-cols-2">
+                    {(['male', 'female'] as const).map((sex) => (
                       <button
-                        key={mult}
-                        type="button"
-                        onClick={() => setPortionMultiplier(mult)}
-                        className={cn(
-                          'min-h-10 rounded-xl text-xs font-bold border tabular-nums transition-colors duration-150',
-                          portionMultiplier === mult
-                            ? 'bg-emerald-500/15 border-emerald-500 text-emerald-400'
-                            : 'bg-zinc-900 border-zinc-800 text-zinc-400'
-                        )}
+                        key={sex}
+                        onClick={() => setBiometricsDraft((b) => ({ ...b, sex }))}
+                        className={`py-2 rounded-xl text-xs font-display font-semibold capitalize transition-colors ${
+                          biometricsDraft.sex === sex
+                            ? 'bg-emerald-400 text-slate-950 font-bold'
+                            : 'text-slate-400'
+                        }`}
                       >
-                        {mult}x
+                        {sex}
                       </button>
                     ))}
                   </div>
+
+                  <button
+                    onClick={() =>
+                      setBiometricsDraft((b) => ({
+                        ...b,
+                        resistanceTraining: !b.resistanceTraining,
+                      }))
+                    }
+                    className={`px-3 py-2 rounded-2xl border text-xs font-display font-semibold flex items-center justify-center gap-2 transition-colors ${
+                      biometricsDraft.resistanceTraining
+                        ? 'bg-m3-primaryContainer border-emerald-400/30 text-emerald-300'
+                        : 'bg-m3-surfaceLow border-white/[0.06] text-slate-400'
+                    }`}
+                  >
+                    <Dumbbell className="w-3.5 h-3.5" />
+                    <span>Lifting: {biometricsDraft.resistanceTraining ? 'Yes' : 'No'}</span>
+                  </button>
                 </div>
 
-                {/* Detected Food Items */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-zinc-400">
-                    Detected Items (tap to include / exclude)
+                {/* Numeric Parameters Grid */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Age (years)</label>
+                    <input
+                      type="number"
+                      value={biometricsDraft.age}
+                      onChange={(e) =>
+                        setBiometricsDraft((b) => ({
+                          ...b,
+                          age: Number(e.target.value) || 25,
+                        }))
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-sm font-mono tabular-nums text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Height (cm)</label>
+                    <input
+                      type="number"
+                      value={biometricsDraft.heightCm}
+                      onChange={(e) =>
+                        setBiometricsDraft((b) => ({
+                          ...b,
+                          heightCm: Number(e.target.value) || 175,
+                        }))
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-sm font-mono tabular-nums text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      Current Weight (kg)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={biometricsDraft.weightKg}
+                      onChange={(e) =>
+                        setBiometricsDraft((b) => ({
+                          ...b,
+                          weightKg: Number(e.target.value) || 70,
+                        }))
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-sm font-mono tabular-nums text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      Target Weight (kg)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={biometricsDraft.targetWeightKg}
+                      onChange={(e) =>
+                        setBiometricsDraft((b) => ({
+                          ...b,
+                          targetWeightKg: Number(e.target.value) || 70,
+                        }))
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-sm font-mono tabular-nums text-emerald-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      Timeline (weeks)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="104"
+                      value={biometricsDraft.targetTimelineWeeks}
+                      onChange={(e) =>
+                        setBiometricsDraft((b) => ({
+                          ...b,
+                          targetTimelineWeeks: Math.max(1, Number(e.target.value) || 12),
+                        }))
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-sm font-mono tabular-nums text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      Body Fat % (Optional)
+                    </label>
+                    <input
+                      type="number"
+                      placeholder={`Auto (~${metabolicResult.estimatedBodyFatPct}%)`}
+                      value={biometricsDraft.bodyFatPct ?? ''}
+                      onChange={(e) =>
+                        setBiometricsDraft((b) => ({
+                          ...b,
+                          bodyFatPct: e.target.value ? Number(e.target.value) : undefined,
+                        }))
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-sm font-mono tabular-nums text-white placeholder-slate-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Activity Level List */}
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-2">
+                    Physical Activity Level (FAO/WHO/UNU PAL)
                   </label>
                   <div className="space-y-1.5">
-                    {analysisResult.items.map((item, idx) => {
-                      const included = item.included !== false;
+                    {(
+                      Object.keys(ACTIVITY_LABELS) as Array<BiometricsProfile['activityLevel']>
+                    ).map((levelKey) => {
+                      const item = ACTIVITY_LABELS[levelKey];
+                      const active = biometricsDraft.activityLevel === levelKey;
                       return (
                         <button
-                          key={idx}
-                          type="button"
-                          onClick={() => handleToggleDetectedItem(idx)}
-                          className={cn(
-                            'w-full min-h-12 p-3 rounded-xl border text-left flex items-center justify-between transition-colors duration-150',
-                            included
-                              ? 'bg-zinc-900 border-zinc-800 text-zinc-100'
-                              : 'bg-zinc-950 border-zinc-900 text-zinc-600 line-through'
-                          )}
+                          key={levelKey}
+                          onClick={() =>
+                            setBiometricsDraft((b) => ({ ...b, activityLevel: levelKey }))
+                          }
+                          className={`w-full px-3.5 py-2.5 rounded-2xl border text-left flex items-center justify-between transition-colors ${
+                            active
+                              ? 'bg-m3-primaryContainer border-emerald-400/35 text-white'
+                              : 'bg-m3-surfaceLow border-white/[0.05] text-slate-300 hover:bg-m3-surfaceHigh'
+                          }`}
                         >
                           <div>
-                            <p className="text-xs font-bold">{item.name}</p>
-                            <p className="text-[11px] text-zinc-400 tabular-nums">
-                              {item.portionEstimate} • P: {item.proteinGrams}g C: {item.carbsGrams}g
-                              F: {item.fatGrams}g
-                            </p>
+                            <p className="text-xs font-display font-semibold">{item.label}</p>
+                            <p className="text-[10px] text-slate-400">{item.desc}</p>
                           </div>
-                          <span className="text-xs font-extrabold text-emerald-400 tabular-nums">
-                            {Math.round(item.calories * portionMultiplier)} kcal
+                          <span className="text-xs font-mono tabular-nums text-emerald-300 font-semibold">
+                            ×{item.pal.toFixed(2)}
                           </span>
                         </button>
                       );
                     })}
                   </div>
                 </div>
+              </div>
+            </motion.div>
+          )}
 
-                <div className="flex gap-2.5 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setAnalysisResult(null)}
-                    className="min-h-12 px-4 rounded-2xl bg-zinc-800 text-xs font-bold text-zinc-300"
-                  >
-                    Re-Scan
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSaveScannedMeal}
-                    className="flex-1 min-h-12 rounded-2xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-zinc-950 font-bold text-sm flex items-center justify-center gap-2 transition-transform duration-150"
-                  >
-                    <span className="tabular-nums">
-                      Log Meal (+{calculateMealXp(analysisResult.healthScore).totalXp} XP)
+          {/* TAB 4: QUESTS, RANKS & ACHIEVEMENT BADGES */}
+          {activeTab === 'quests' && (
+            <motion.div
+              key="quests"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={M3_SPRING}
+              className="space-y-4"
+            >
+              {/* Player Progression Card */}
+              <div className="rounded-[28px] bg-m3-surfaceContainer border border-white/[0.07] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-[20px] bg-m3-primaryContainer border border-emerald-400/30 flex items-center justify-center text-emerald-300 shrink-0">
+                    <RenderVectorIcon name={levelInfo.rankIcon} className="w-7 h-7" />
+                  </div>
+                  <div className="flex-1">
+                    <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400">
+                      Level {levelInfo.level} Progression
                     </span>
-                  </button>
+                    <h1 className="text-xl font-display font-bold text-white tracking-tight">
+                      {levelInfo.rankTitle}
+                    </h1>
+                    <p className="text-xs font-mono tabular-nums text-slate-400 mt-0.5">
+                      Total XP: {userState.xp} • Longest Streak: {userState.longestStreak}d
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <div className="flex justify-between text-[11px] font-mono tabular-nums text-slate-400 mb-1.5">
+                    <span>Level {levelInfo.level}</span>
+                    <span>
+                      {levelInfo.currentLevelXp} / {levelInfo.nextLevelXp} XP (
+                      {levelInfo.progressPercent}%)
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-m3-surfaceLow rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full bg-emerald-400 rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${levelInfo.progressPercent}%` }}
+                      transition={M3_SOFT_SPRING}
+                    />
+                  </div>
                 </div>
               </div>
-            )}
-          </div>
+
+              {/* Badges Grid */}
+              <div className="rounded-[28px] bg-m3-surfaceContainer border border-white/[0.07] p-5">
+                <div className="flex items-center justify-between mb-3.5">
+                  <div className="flex items-center gap-2">
+                    <Trophy className="w-4 h-4 text-amber-400" />
+                    <h2 className="text-sm font-display font-bold text-white">
+                      Mastery Badges
+                    </h2>
+                  </div>
+                  <span className="text-xs font-mono tabular-nums text-slate-400">
+                    {userState.unlockedBadgeIds.length} / {ALL_BADGES.length}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  {ALL_BADGES.map((badge) => {
+                    const unlocked = userState.unlockedBadgeIds.includes(badge.id);
+                    return (
+                      <div
+                        key={badge.id}
+                        className={`p-3.5 rounded-[22px] border transition-all ${
+                          unlocked
+                            ? 'bg-m3-primaryContainer/60 border-emerald-400/30 text-white'
+                            : 'bg-m3-surfaceLow border-white/[0.05] text-slate-500 opacity-60'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div
+                            className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
+                              unlocked
+                                ? 'bg-emerald-400/20 border-emerald-400/30 text-emerald-300'
+                                : 'bg-m3-surfaceContainer border-white/[0.05] text-slate-500'
+                            }`}
+                          >
+                            <RenderVectorIcon name={badge.icon} className="w-4 h-4" />
+                          </div>
+                          <span className="text-[10px] font-mono tabular-nums text-emerald-400 font-semibold">
+                            +{badge.xpReward} XP
+                          </span>
+                        </div>
+                        <h3 className="text-xs font-display font-bold text-slate-100">
+                          {badge.title}
+                        </h3>
+                        <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
+                          {badge.description}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* TAB 5: SETTINGS & API DIAGNOSTICS */}
+          {activeTab === 'settings' && (
+            <motion.div
+              key="settings"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={M3_SPRING}
+              className="space-y-4"
+            >
+              {/* API Configuration Card */}
+              <div className="rounded-[28px] bg-m3-surfaceContainer border border-white/[0.07] p-5 space-y-4">
+                <div className="flex items-center gap-2.5">
+                  <KeyRound className="w-4 h-4 text-emerald-400" />
+                  <h1 className="text-base font-display font-bold text-white">
+                    Vision API Connection
+                  </h1>
+                </div>
+
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Paste your personal Gemini API key from Google AI Studio. Includes automatic multi-model failover so high-demand 503 spikes never interrupt meal logging.
+                </p>
+
+                {hasBuiltInApiKey() && !localStorage.getItem('calquest_gemini_api_key') && (
+                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 text-xs text-emerald-300 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>Built-in environment key detected and active.</span>
+                  </div>
+                )}
+
+                <div className="relative">
+                  <input
+                    type={showApiKey ? 'text' : 'password'}
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    placeholder="AIzaSy..."
+                    className="w-full pl-3.5 pr-10 py-3 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey((s) => !s)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  >
+                    {showApiKey ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTestApiConnection}
+                    disabled={testingApi}
+                    className="flex-1 py-2.5 px-4 rounded-full bg-m3-surfaceHigh hover:bg-m3-surfaceHighest border border-white/[0.08] text-xs font-display font-semibold text-slate-200 flex items-center justify-center gap-2 active:scale-95 transition-all"
+                  >
+                    {testingApi ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                        Testing Connection...
+                      </>
+                    ) : (
+                      <>
+                        <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+                        Verify Connection
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {apiTestResult && (
+                  <div
+                    className={`p-3.5 rounded-2xl border text-xs flex items-start gap-2.5 ${
+                      apiTestResult.ok
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
+                        : 'bg-rose-500/10 border-rose-500/30 text-rose-200'
+                    }`}
+                  >
+                    {apiTestResult.ok ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    )}
+                    <div>
+                      <p className="font-display font-semibold">
+                        {apiTestResult.ok ? 'API Ready' : 'Connection Error'}
+                      </p>
+                      <p className="font-mono text-[11px] opacity-90 mt-0.5">
+                        {apiTestResult.message} ({apiTestResult.latencyMs}ms)
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Manual Daily Goals Override */}
+              <div className="rounded-[28px] bg-m3-surfaceContainer border border-white/[0.07] p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sliders className="w-4 h-4 text-emerald-400" />
+                    <h2 className="text-sm font-display font-bold text-white">
+                      Daily Targets & Prompt Context
+                    </h2>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('math')}
+                    className="text-[11px] text-emerald-400 font-medium hover:underline"
+                  >
+                    Calculate via Body Math
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      Daily Calories (kcal)
+                    </label>
+                    <input
+                      type="number"
+                      value={goalsDraft.dailyCalories}
+                      onChange={(e) =>
+                        setGoalsDraft((g) => ({
+                          ...g,
+                          dailyCalories: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-sm font-mono tabular-nums text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      Protein Target (g)
+                    </label>
+                    <input
+                      type="number"
+                      value={goalsDraft.proteinGrams}
+                      onChange={(e) =>
+                        setGoalsDraft((g) => ({
+                          ...g,
+                          proteinGrams: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-sm font-mono tabular-nums text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      Carbohydrates (g)
+                    </label>
+                    <input
+                      type="number"
+                      value={goalsDraft.carbsGrams}
+                      onChange={(e) =>
+                        setGoalsDraft((g) => ({
+                          ...g,
+                          carbsGrams: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-sm font-mono tabular-nums text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      Dietary Fat (g)
+                    </label>
+                    <input
+                      type="number"
+                      value={goalsDraft.fatGrams}
+                      onChange={(e) =>
+                        setGoalsDraft((g) => ({
+                          ...g,
+                          fatGrams: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-sm font-mono tabular-nums text-white"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    Personal Culinary Context (sent with every photo scan)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={customPromptDraft}
+                    onChange={(e) => setCustomPromptDraft(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-2xl bg-m3-surfaceLow border border-white/[0.08] text-xs text-white focus:outline-none focus:border-emerald-400"
+                  />
+                </div>
+
+                <button
+                  onClick={handleSaveSettings}
+                  className="w-full py-3.5 rounded-full bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-display font-bold text-xs flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+                >
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  Save Configuration
+                </button>
+
+                {settingsSavedToast && (
+                  <p className="text-xs text-emerald-400 text-center font-medium">
+                    Configuration saved.
+                  </p>
+                )}
+              </div>
+
+              {/* Reset Data */}
+              <div className="rounded-[24px] bg-m3-surfaceContainer border border-white/[0.06] p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-display font-semibold text-slate-200">
+                    Reset Local Logs
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    Clear meal history and XP stored on this device.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    if (window.confirm('Reset all logged meals and XP?')) {
+                      clearAllData();
+                      setMeals(loadMeals());
+                      setUserState(loadUserState());
+                    }
+                  }}
+                  className="px-3.5 py-2 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-display font-semibold flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Reset
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </main>
+
+      {/* MATERIAL 3 EXPRESSIVE FLOATING PILL NAVIGATION BAR */}
+      <nav className="fixed bottom-3 inset-x-4 max-w-[calc(28rem-2rem)] mx-auto z-40 rounded-[28px] bg-m3-surfaceContainer/95 backdrop-blur-2xl border border-white/[0.09] px-2 py-2 shadow-[0_20px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.08)]">
+        <div className="grid grid-cols-5 items-center">
+          {(
+            [
+              { id: 'dashboard', label: 'Home', Icon: Activity },
+              { id: 'math', label: 'Math', Icon: Calculator },
+              { id: 'scan', label: 'Scan', Icon: Camera },
+              { id: 'quests', label: 'Ranks', Icon: Trophy },
+              { id: 'settings', label: 'Config', Icon: Settings },
+            ] as const
+          ).map(({ id, label, Icon }) => {
+            const active = activeTab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className="relative flex flex-col items-center justify-center py-1.5 group"
+              >
+                <div className="relative px-4 py-1 rounded-full flex items-center justify-center">
+                  {active && (
+                    <motion.div
+                      layoutId="m3-bottom-nav-pill"
+                      transition={M3_SPRING}
+                      className="absolute inset-0 rounded-full bg-m3-primaryContainer border border-emerald-400/25"
+                    />
+                  )}
+                  <Icon
+                    className={`w-4 h-4 relative z-10 transition-colors ${
+                      active
+                        ? 'text-emerald-300'
+                        : 'text-slate-400 group-hover:text-slate-200'
+                    }`}
+                  />
+                </div>
+                <span
+                  className={`text-[10px] font-display mt-1 transition-colors ${
+                    active ? 'text-emerald-300 font-bold' : 'text-slate-400 font-medium'
+                  }`}
+                >
+                  {label}
+                </span>
+              </button>
+            );
+          })}
         </div>
-      )}
-
-      {/* Bottom Navigation Bar (z-30, min-h-11 touch targets) */}
-      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-zinc-950/95 backdrop-blur-md border-t border-zinc-800/90 px-3 py-1.5 flex items-center justify-around z-30">
-        <button
-          type="button"
-          onClick={() => setActiveTab('today')}
-          className={cn(
-            'min-h-11 min-w-16 flex flex-col items-center justify-center gap-1 rounded-xl transition-colors duration-150',
-            activeTab === 'today' ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-200'
-          )}
-        >
-          <Utensils className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Today</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('plan')}
-          className={cn(
-            'min-h-11 min-w-16 flex flex-col items-center justify-center gap-1 rounded-xl transition-colors duration-150',
-            activeTab === 'plan' ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-200'
-          )}
-        >
-          <Calculator className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Body Math</span>
-        </button>
-
-        {/* Center Camera Button (solid fill, no gradients/glows per ui-skills) */}
-        <button
-          type="button"
-          aria-label="Snap Meal Photo"
-          onClick={() => handleStartCapture('camera')}
-          className="-mt-6 w-14 h-14 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 flex items-center justify-center shadow-lg border-4 border-zinc-950 active:scale-[0.96] transition-transform duration-150 ease-out"
-        >
-          <Plus className="w-7 h-7 stroke-[2.5]" />
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('quests')}
-          className={cn(
-            'min-h-11 min-w-16 flex flex-col items-center justify-center gap-1 rounded-xl transition-colors duration-150',
-            activeTab === 'quests' ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-200'
-          )}
-        >
-          <Award className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Quests</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('settings')}
-          className={cn(
-            'min-h-11 min-w-16 flex flex-col items-center justify-center gap-1 rounded-xl transition-colors duration-150',
-            activeTab === 'settings' ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-200'
-          )}
-        >
-          <Settings className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Settings</span>
-        </button>
       </nav>
+
+      {/* XP & LEVEL-UP MODAL OVERLAY */}
+      <AnimatePresence>
+        {celebrationData && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-5"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 12 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.92, opacity: 0 }}
+              transition={M3_SPRING}
+              className="w-full max-w-xs rounded-[28px] bg-m3-surfaceContainer border border-emerald-400/30 p-6 text-center space-y-4 shadow-2xl"
+            >
+              <div className="w-14 h-14 rounded-[20px] bg-m3-primaryContainer border border-emerald-400/30 flex items-center justify-center mx-auto text-emerald-300">
+                <Zap className="w-7 h-7" />
+              </div>
+
+              <div>
+                <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400">
+                  Progress Recorded
+                </span>
+                <h3 className="text-2xl font-mono tabular-nums font-bold text-white mt-0.5">
+                  +{celebrationData.xpGained} XP
+                </h3>
+                {celebrationData.leveledUp && (
+                  <p className="text-xs font-display font-semibold text-amber-300 mt-1">
+                    Level {celebrationData.newLevel} Reached
+                  </p>
+                )}
+              </div>
+
+              {celebrationData.newBadges.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-white/[0.07]">
+                  <p className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                    New Badge Unlocked
+                  </p>
+                  {celebrationData.newBadges.map((b) => (
+                    <div
+                      key={b.id}
+                      className="p-2.5 rounded-2xl bg-m3-surfaceLow border border-emerald-400/20 flex items-center gap-2.5 text-left"
+                    >
+                      <div className="w-8 h-8 rounded-xl bg-m3-primaryContainer flex items-center justify-center text-emerald-300 shrink-0">
+                        <RenderVectorIcon name={b.icon} className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-display font-bold text-white">{b.title}</p>
+                        <p className="text-[10px] text-slate-400">{b.description}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button
+                onClick={() => setCelebrationData(null)}
+                className="w-full py-3 rounded-full bg-emerald-400 text-slate-950 font-display font-bold text-xs active:scale-95 transition-transform"
+              >
+                Continue
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
-
-export default App;
